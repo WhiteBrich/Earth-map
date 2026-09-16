@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>三维地球 · 点击显示当地时间</title>
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        #cesiumContainer { width: 100%; height: 100%; }
+
+        /* 时间信息面板 */
+        #timePanel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            min-width: 260px;
+            background: rgba(20, 30, 40, 0.88);
+            color: #fff;
+            padding: 16px 20px;
+            border-radius: 8px;
+            font-family: "Microsoft YaHei", sans-serif;
+            font-size: 14px;
+            line-height: 1.8;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        }
+        #timePanel.visible { opacity: 1; }
+        #timePanel .time-main {
+            font-size: 24px;
+            font-weight: 600;
+            color: #4fc3f7;
+            margin: 6px 0;
+        }
+        #timePanel .coord { color: #aaa; font-size: 12px; }
+        #hint {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.6);
+            color: #ddd;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-family: "Microsoft YaHei", sans-serif;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+
+    <div id="timePanel">
+        <div>点击位置当地时间</div>
+        <div class="time-main" id="localTime">--:--:--</div>
+        <div id="localDate">----年--月--日</div>
+        <div class="coord" id="coordInfo"></div>
+    </div>
+
+    <div id="hint">点击地球任意位置，查看当地时间</div>
+
+    <!-- 引入 Cesium（使用 CDN） -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.120/Build/Cesium/Widgets/widgets.css">
+    <script src="https://cdn.jsdelivr.net/npm/cesium@1.120/Build/Cesium/Cesium.js"></script>
+
+    <script>
+    // ============================================================
+    // 1. 配置天地图密钥
+    // ============================================================
+    const TIANDITU_KEY = '67202ad0231a8193b8cdda3816077687';  // ← 替换为你的天地图 Key
+
+    // ============================================================
+    // 2. 初始化 Cesium Viewer
+    // ============================================================
+    Cesium.Ion.defaultAccessToken = ''; // 不使用 Ion 默认底图
+
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+        baseLayerPicker: false,
+        geocoder: false,
+        homeButton: false,
+        sceneModePicker: false,
+        navigationHelpButton: false,
+        animation: false,
+        timeline: false,
+        fullscreenButton: false,
+        infoBox: false,
+        selectionIndicator: false,
+        // 先给一个空底图，稍后用天地图覆盖
+        imageryProvider: false,
+        // 关闭默认地形（如需加载天地图地形可另行配置）
+        terrainProvider: new Cesium.EllipsoidTerrainProvider()
+    });
+
+    // 隐藏 Cesium 版权信息（可选，根据合规要求自行决定）
+    viewer.cesiumWidget.creditContainer.style.display = 'none';
+
+    // ============================================================
+    // 3. 加载天地图影像底图 + 中文注记
+    //    采用 WMTS 协议，天地图官方标准接口
+    // ============================================================
+    const subdomains = ['0', '1', '2', '3', '4', '5', '6', '7'];
+
+    // 影像底图（img_w：全球影像）
+    const tdtImgProvider = new Cesium.WebMapTileServiceImageryProvider({
+        url: 'https://t{s}.tianditu.gov.cn/img_w/wmts?tk=' + TIANDITU_KEY,
+        layer: 'img',
+        style: 'default',
+        format: 'tiles',
+        tileMatrixSetID: 'w',
+        subdomains: subdomains,
+        maximumLevel: 18
+    });
+    viewer.imageryLayers.addImageryProvider(tdtImgProvider);
+
+    // 中文注记（cia_w：全球中文注记）
+    const tdtCiaProvider = new Cesium.WebMapTileServiceImageryProvider({
+        url: 'https://t{s}.tianditu.gov.cn/cia_w/wmts?tk=' + TIANDITU_KEY,
+        layer: 'cia',
+        style: 'default',
+        format: 'tiles',
+        tileMatrixSetID: 'w',
+        subdomains: subdomains,
+        maximumLevel: 18
+    });
+    viewer.imageryLayers.addImageryProvider(tdtCiaProvider);
+
+    // ============================================================
+    // 4. 初始视角：全球视角
+    // ============================================================
+    viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(105, 35, 20000000)
+    });
+
+    // ============================================================
+    // 5. 点击事件：获取经纬度 → 计算时区 → 显示当地时间
+    // ============================================================
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+    handler.setInputAction(function (click) {
+        // 获取点击位置的笛卡尔坐标
+        const cartesian = viewer.scene.pickPosition(click.position);
+
+        if (!cartesian) {
+            // 如果 pickPosition 返回 undefined（如点到天空），回退到椭球面求交
+            const ray = viewer.camera.getPickRay(click.position);
+            if (ray) {
+                const ellipsoidPos = viewer.scene.globe.ellipsoid
+                    .pick(ray, viewer.scene);
+                if (ellipsoidPos) {
+                    processClick(ellipsoidPos);
+                }
+            }
+            return;
+        }
+        processClick(cartesian);
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    function processClick(cartesian) {
+        // 笛卡尔坐标 → 经纬度（弧度）
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        const lon = Cesium.Math.toDegrees(cartographic.longitude);
+        const lat = Cesium.Math.toDegrees(cartographic.latitude);
+
+        // ---- 基于经度估算时区偏移（小时） ----
+        // 时区 = 经度 / 15，四舍五入到整数
+        // 这是地理学上的标准估算方式，适用于全球范围
+        const tzOffsetHours = Math.round(lon / 15);
+
+        // 限制在有效时区范围内（UTC-12 ~ UTC+14）
+        const clampedOffset = Math.max(-12, Math.min(14, tzOffsetHours));
+
+        // ---- 计算当地时间 ----
+        const now = new Date();
+        // 获取 UTC 时间毫秒数，加上时区偏移
+        const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+        const localMs = utcMs + clampedOffset * 3600000;
+        const localDate = new Date(localMs);
+
+        // ---- 格式化显示 ----
+        const pad = n => String(n).padStart(2, '0');
+
+        const timeStr = pad(localDate.getHours()) + ':' +
+                        pad(localDate.getMinutes()) + ':' +
+                        pad(localDate.getSeconds());
+
+        const dateStr = localDate.getFullYear() + '年' +
+                        pad(localDate.getMonth() + 1) + '月' +
+                        pad(localDate.getDate()) + '日';
+
+        // UTC 偏移文字
+        const offsetSign = clampedOffset >= 0 ? '+' : '';
+        const offsetStr = 'UTC' + offsetSign + clampedOffset;
+
+        // 更新面板
+        document.getElementById('localTime').textContent = timeStr;
+        document.getElementById('localDate').textContent = dateStr;
+        document.getElementById('coordInfo').textContent =
+            '经度 ' + lon.toFixed(2) + '°　纬度 ' + lat.toFixed(2) + '°　' + offsetStr;
+
+        document.getElementById('timePanel').classList.add('visible');
+    }
+
+    // ============================================================
+    // 6. 每秒刷新一次时间（保持秒数跳动）
+    // ============================================================
+    let lastClickData = null;
+
+    // 覆盖 processClick，记录最近一次点击数据
+    const originalProcess = processClick;
+    processClick = function (cartesian) {
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        const lon = Cesium.Math.toDegrees(cartographic.longitude);
+        const lat = Cesium.Math.toDegrees(cartographic.latitude);
+        const tzOffsetHours = Math.max(-12, Math.min(14, Math.round(lon / 15)));
+        lastClickData = { lon, lat, tzOffsetHours };
+        originalProcess(cartesian);
+    };
+
+    setInterval(function () {
+        if (!lastClickData) return;
+        const { lon, lat, tzOffsetHours } = lastClickData;
+
+        const now = new Date();
+        const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+        const localMs = utcMs + tzOffsetHours * 3600000;
+        const localDate = new Date(localMs);
+
+        const pad = n => String(n).padStart(2, '0');
+        document.getElementById('localTime').textContent =
+            pad(localDate.getHours()) + ':' +
+            pad(localDate.getMinutes()) + ':' +
+            pad(localDate.getSeconds());
+
+        document.getElementById('localDate').textContent =
+            localDate.getFullYear() + '年' +
+            pad(localDate.getMonth() + 1) + '月' +
+            pad(localDate.getDate()) + '日';
+    }, 1000);
+
+    </script>
+</body>
+</html>

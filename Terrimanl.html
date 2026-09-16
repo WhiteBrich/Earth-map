@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>三维地形互动底图 · 搜索跳转</title>
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        #cesiumContainer { width: 100%; height: 100%; }
+
+        /* 搜索面板 */
+        #searchPanel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 999;
+            display: flex;
+            gap: 8px;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+        #searchInput {
+            width: 280px;
+            padding: 10px 14px;
+            font-size: 14px;
+            border: 1px solid #4fc3f7;
+            border-radius: 4px;
+            background: rgba(20, 30, 40, 0.88);
+            color: #fff;
+            outline: none;
+        }
+        #searchInput::placeholder { color: #aaa; }
+        #searchBtn {
+            padding: 10px 20px;
+            font-size: 14px;
+            cursor: pointer;
+            background: #4fc3f7;
+            color: #0a1929;
+            border: none;
+            border-radius: 4px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        #searchBtn:hover { background: #81d4fa; }
+        #searchBtn:disabled { background: #555; color: #999; cursor: not-allowed; }
+
+        /* 搜索结果下拉列表 */
+        #resultList {
+            position: absolute;
+            top: 62px;
+            left: 20px;
+            width: 360px;
+            max-height: 320px;
+            overflow-y: auto;
+            background: rgba(20, 30, 40, 0.95);
+            border: 1px solid #4fc3f7;
+            border-radius: 0 0 6px 6px;
+            z-index: 1000;
+            display: none;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+        #resultList .result-item {
+            padding: 10px 14px;
+            color: #ddd;
+            font-size: 13px;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            line-height: 1.5;
+        }
+        #resultList .result-item:hover { background: rgba(79, 195, 247, 0.2); }
+        #resultList .result-item .item-name { color: #4fc3f7; font-weight: 600; }
+        #resultList .result-item .item-addr { color: #999; font-size: 12px; }
+
+        /* 状态提示 */
+        #statusMsg {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.75);
+            color: #ddd;
+            padding: 10px 24px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-family: "Microsoft YaHei", sans-serif;
+            display: none;
+            z-index: 999;
+            white-space: nowrap;
+        }
+    </style>
+
+    <link rel="stylesheet"
+          href="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Widgets/widgets.css">
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+
+    <!-- 搜索面板 -->
+    <div id="searchPanel">
+        <input id="searchInput" type="text" placeholder="输入地名搜索，如：北京、上海、湛江" />
+        <button id="searchBtn">搜索</button>
+    </div>
+    <div id="resultList"></div>
+
+    <div id="statusMsg"></div>
+
+    <!-- 1. Cesium JS -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Cesium.js"></script>
+
+    <script>
+    // ============================================================
+    // 配置区
+    // ============================================================
+    const TIANDITU_KEY = '67202ad0231a8193b8cdda3816077687'; // ← 替换为你的天地图密钥
+    const subdomains = ['0','1','2','3','4','5','6','7'];
+
+    // 禁用 Cesium Ion
+    Cesium.Ion.defaultAccessToken = '';
+
+    // ============================================================
+    // 1. 初始化 Viewer
+    // ============================================================
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+        baseLayerPicker: false,
+        geocoder: false,
+        homeButton: true,
+        sceneModePicker: false,
+        navigationHelpButton: false,
+        animation: false,
+        timeline: false,
+        fullscreenButton: true,
+        infoBox: false,
+        selectionIndicator: false,
+        baseLayer: false
+    });
+
+    viewer.cesiumWidget.creditContainer.style.display = 'none';
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+
+    // ============================================================
+    // 2. 加载天地图影像底图
+    // ============================================================
+    const tdtImgProvider = new Cesium.WebMapTileServiceImageryProvider({
+        url: `https://t{s}.tianditu.gov.cn/img_w/wmts?tk=${TIANDITU_KEY}`,
+        layer: 'img', style: 'default', format: 'tiles',
+        tileMatrixSetID: 'w', subdomains: subdomains,
+        maximumLevel: 18
+    });
+    viewer.imageryLayers.addImageryProvider(tdtImgProvider);
+
+    // ============================================================
+    // 3. 加载天地图中文注记
+    // ============================================================
+    const tdtCiaProvider = new Cesium.WebMapTileServiceImageryProvider({
+        url: `https://t{s}.tianditu.gov.cn/cia_w/wmts?tk=${TIANDITU_KEY}`,
+        layer: 'cia', style: 'default', format: 'tiles',
+        tileMatrixSetID: 'w', subdomains: subdomains,
+        maximumLevel: 18
+    });
+    viewer.imageryLayers.addImageryProvider(tdtCiaProvider);
+
+    // ============================================================
+    // 4. 加载天地图三维地形服务
+    //    使用 CesiumTerrainProvider，这是最可靠的接入方式
+    //    天地图地形服务地址：https://t{s}.tianditu.gov.cn/mapservice/swdx
+    // ============================================================
+    const terrainProvider = new Cesium.CesiumTerrainProvider({
+        url: `https://t{s}.tianditu.gov.cn/mapservice/swdx?tk=${TIANDITU_KEY}`,
+        subdomains: subdomains,
+        requestVertexNormals: true,
+        requestWaterMask: true
+    });
+
+    viewer.terrainProvider = terrainProvider;
+
+    // 监听地形加载状态
+    terrainProvider.readyPromise.then(function () {
+        console.log('✅ 天地图三维地形服务加载成功');
+    }).catch(function (err) {
+        console.error('❌ 天地图三维地形服务加载失败：', err);
+        // 回退到椭球地形，保证页面不崩溃
+        viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+    });
+
+    // ============================================================
+    // 5. 初始视角
+    // ============================================================
+    viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(105, 35, 12000000),
+        orientation: {
+            heading: Cesium.Math.toRadians(0),
+            pitch: Cesium.Math.toRadians(-60),
+            roll: 0
+        }
+    });
+
+    // ============================================================
+    // 6. 搜索功能
+    // ============================================================
+    const searchInput = document.getElementById('searchInput');
+    const searchBtn = document.getElementById('searchBtn');
+    const resultList = document.getElementById('resultList');
+    const statusMsg = document.getElementById('statusMsg');
+
+    let searchMarker = null;
+
+    function showStatus(msg, duration = 3000) {
+        statusMsg.textContent = msg;
+        statusMsg.style.display = 'block';
+        if (duration > 0) {
+            setTimeout(() => { statusMsg.style.display = 'none'; }, duration);
+        }
+    }
+
+    function hideResultList() {
+        resultList.style.display = 'none';
+        resultList.innerHTML = '';
+    }
+
+    async function doSearch() {
+        const keyword = searchInput.value.trim();
+        if (!keyword) {
+            showStatus('请输入搜索关键词');
+            return;
+        }
+
+        searchBtn.disabled = true;
+        searchBtn.textContent = '搜索中...';
+        hideResultList();
+        showStatus('正在搜索...', 0);
+
+        try {
+            // V2.0 接口，queryType=7 为地名搜索
+            const postStr = {
+                keyWord: keyword,
+                level: 12,
+                mapBound: '-180,-90,180,90',
+                queryType: 7,
+                start: 0,
+                count: 10
+            };
+
+            const url = `https://api.tianditu.gov.cn/v2/search?postStr=${encodeURIComponent(JSON.stringify(postStr))}&type=query&tk=${TIANDITU_KEY}`;
+
+            const response = await fetch(url);
+            const data = await response.json();
+
+            console.log('搜索API返回：', data);
+
+            // V2.0 接口的状态字段判断
+            const statusCode = data.status?.infocode || data.status;
+            if (statusCode !== 0 && statusCode !== '0' && statusCode !== 1000) {
+                const msg = data.status?.cndesc || data.msg || '未知错误';
+                showStatus(`搜索失败：${msg}`);
+                return;
+            }
+
+            const results = data.pois || data.result || [];
+            if (results.length === 0) {
+                showStatus('未找到相关地点，请尝试其他关键词');
+                return;
+            }
+
+            resultList.innerHTML = '';
+            results.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'result-item';
+
+                const name = item.name || item.keyword || '未知地点';
+                const address = item.address || '';
+
+                // V2.0 返回坐标在 lonlat 字段，格式为 "经度,纬度"
+                let lon = 0, lat = 0;
+                if (item.lonlat) {
+                    const parts = item.lonlat.split(',');
+                    lon = parseFloat(parts[0]);
+                    lat = parseFloat(parts[1]);
+                } else {
+                    lon = parseFloat(item.lon || item.x || 0);
+                    lat = parseFloat(item.lat || item.y || 0);
+                }
+
+                div.innerHTML = `
+                    <div class="item-name">${index + 1}. ${name}</div>
+                    <div class="item-addr">${address || `经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°`}</div>
+                `;
+
+                div.addEventListener('click', () => {
+                    flyToLocation(lon, lat, name);
+                    hideResultList();
+                    searchInput.value = name;
+                });
+
+                resultList.appendChild(div);
+            });
+
+            resultList.style.display = 'block';
+            showStatus(`找到 ${results.length} 个结果，点击条目跳转`);
+
+        } catch (err) {
+            console.error('搜索请求失败：', err);
+            showStatus('搜索请求失败，请检查网络或密钥配置');
+        } finally {
+            searchBtn.disabled = false;
+            searchBtn.textContent = '搜索';
+        }
+    }
+
+    // ============================================================
+    // 7. 飞行定位
+    // ============================================================
+    function flyToLocation(lon, lat, name) {
+        if (searchMarker) {
+            viewer.entities.remove(searchMarker);
+            searchMarker = null;
+        }
+
+        searchMarker = viewer.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(lon, lat),
+            point: {
+                pixelSize: 12,
+                color: Cesium.Color.RED,
+                outlineColor: Cesium.Color.WHITE,
+                outlineWidth: 2,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            },
+            label: {
+                text: name,
+                font: 'bold 14px "Microsoft YaHei", sans-serif',
+                fillColor: Cesium.Color.WHITE,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 2,
+                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                pixelOffset: new Cesium.Cartesian2(0, -24),
+                eyeOffset: new Cesium.Cartesian3(0, 0, -50000)
+            }
+        });
+
+        viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(lon, lat, 8000),
+            orientation: {
+                heading: Cesium.Math.toRadians(0),
+                pitch: Cesium.Math.toRadians(-65),
+                roll: 0
+            },
+            duration: 3,
+            complete: () => {
+                showStatus(`已定位到：${name}`, 2000);
+            }
+        });
+    }
+
+    // ============================================================
+    // 8. 事件绑定
+    // ============================================================
+    searchBtn.addEventListener('click', doSearch);
+    searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') doSearch();
+    });
+
+    viewer.scene.canvas.addEventListener('click', (e) => {
+        if (!resultList.contains(e.target)) {
+            hideResultList();
+        }
+    });
+
+    // ============================================================
+    // 9. 点击地图显示经纬度与海拔
+    //    使用 sampleTerrainMostDetailed 异步获取真实海拔
+    // ============================================================
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+    handler.setInputAction(async function (click) {
+        const ray = viewer.camera.getPickRay(click.position);
+        if (!ray) return;
+
+        // 先获取经纬度（椭球面交点）
+        const ellipsoidPos = viewer.scene.globe.ellipsoid.pick(ray, viewer.scene);
+        if (!ellipsoidPos) return;
+
+        const cartographic = Cesium.Cartographic.fromCartesian(ellipsoidPos);
+        const lon = Cesium.Math.toDegrees(cartographic.longitude);
+        const lat = Cesium.Math.toDegrees(cartographic.latitude);
+
+        showStatus(`经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　正在获取海拔...`, 0);
+
+        // 异步获取真实海拔
+        try {
+            const positions = [Cesium.Cartographic.fromDegrees(lon, lat)];
+            const sampled = await Cesium.sampleTerrainMostDetailed(
+                viewer.terrainProvider,
+                positions
+            );
+            const height = sampled[0].height;
+
+            showStatus(
+                `经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　海拔 ${height.toFixed(1)} 米`,
+                4000
+            );
+        } catch (err) {
+            console.warn('地形高度采样失败：', err);
+            showStatus(
+                `经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　海拔获取失败`,
+                4000
+            );
+        }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    console.log('✅ 三维地形互动底图初始化完成');
+    </script>
+</body>
+</html>

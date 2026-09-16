@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <title>三维地球地图 - 当地时间查询</title>
+    <style type="text/css">
+        body, html, #allmap {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            margin: 0;
+            font-family: "微软雅黑", "Microsoft YaHei", sans-serif;
+        }
+
+        #panel {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            z-index: 999;
+            background: rgba(15, 23, 42, 0.75);
+            color: #e2e8f0;
+            padding: 14px 18px;
+            border-radius: 10px;
+            font-size: 13px;
+            line-height: 1.6;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+            max-width: 320px;
+        }
+
+        #panel b {
+            color: #38bdf8;
+        }
+
+        .bmap-info-box {
+            font-family: "微软雅黑", "Microsoft YaHei", sans-serif;
+            padding: 6px 4px 2px 4px;
+            min-width: 220px;
+        }
+
+        .bmap-info-title {
+            font-size: 15px;
+            font-weight: bold;
+            color: #0f172a;
+            margin-bottom: 8px;
+            border-bottom: 2px solid #38bdf8;
+            padding-bottom: 6px;
+        }
+
+        .bmap-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 13px;
+            color: #334155;
+        }
+
+        .bmap-info-row .label {
+            color: #64748b;
+        }
+
+        .bmap-info-row .value {
+            font-weight: bold;
+            color: #0f172a;
+        }
+
+        .bmap-info-time {
+            margin-top: 8px;
+            padding: 8px 10px;
+            background: linear-gradient(135deg, #38bdf8, #0284c7);
+            border-radius: 6px;
+            color: #ffffff;
+            text-align: center;
+        }
+
+        .bmap-info-time .time-value {
+            font-size: 18px;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+
+        .bmap-info-time .time-label {
+            font-size: 11px;
+            opacity: 0.85;
+        }
+    </style>
+    <script src="https://api.map.baidu.com/api?type=webgl&v=1.0&ak=GpCLsGSIKZ4QF76f2KcREc2E0cLSFKvb"></script>
+</head>
+<body>
+    <div id="allmap"></div>
+    <div id="panel">
+        <div><b>三维地球模式 · 示例 Demo</b></div>
+        <div>点击地球表面任意位置，查看该经纬度按“经度/15取整”方式估算的时区及当地时间。</div>
+        <div>基准北京时间：2026-09-13 16:06:38（UTC+8）</div>
+    </div>
+    <script type="text/javascript">
+        // 基准北京时间（用户提供），作为当地时间换算的锚点
+        var BEIJING_REF_YEAR = 2026;
+        var BEIJING_REF_MONTH = 9; // 1-12
+        var BEIJING_REF_DAY = 13;
+        var BEIJING_REF_HOUR = 16;
+        var BEIJING_REF_MINUTE = 6;
+        var BEIJING_REF_SECOND = 38;
+        var BEIJING_OFFSET_HOURS = 8; // 北京时间为 UTC+8
+
+        // 将基准北京时间换算为对应的 UTC 毫秒时间戳
+        function getBeijingRefUTCTimestamp() {
+            var utcMillis = Date.UTC(
+                BEIJING_REF_YEAR,
+                BEIJING_REF_MONTH - 1,
+                BEIJING_REF_DAY,
+                BEIJING_REF_HOUR - BEIJING_OFFSET_HOURS,
+                BEIJING_REF_MINUTE,
+                BEIJING_REF_SECOND
+            );
+            return utcMillis;
+        }
+
+        // 根据经度计算时区偏移（经度 / 15 取整，东经正、西经负），范围限制在 -12 ~ 12
+        function getTimezoneOffsetByLng(lng) {
+            var offset = Math.round(lng / 15);
+            if (offset > 12) offset = 12;
+            if (offset < -12) offset = -12;
+            return offset;
+        }
+
+        // 根据时区偏移，基于基准 UTC 时间戳计算当地时间字符串
+        function calcLocalTimeByOffset(tzOffset) {
+            var refUTCMillis = getBeijingRefUTCTimestamp();
+            var localMillis = refUTCMillis + tzOffset * 3600 * 1000;
+            var localDate = new Date(localMillis);
+
+            function pad(n) {
+                return n < 10 ? "0" + n : "" + n;
+            }
+
+            var y = localDate.getUTCFullYear();
+            var m = pad(localDate.getUTCMonth() + 1);
+            var d = pad(localDate.getUTCDate());
+            var hh = pad(localDate.getUTCHours());
+            var mm = pad(localDate.getUTCMinutes());
+            var ss = pad(localDate.getUTCSeconds());
+
+            return {
+                dateStr: y + "-" + m + "-" + d,
+                timeStr: hh + ":" + mm + ":" + ss
+            };
+        }
+
+        function formatTzLabel(tzOffset) {
+            if (tzOffset === 0) return "UTC+0";
+            return tzOffset > 0 ? ("UTC+" + tzOffset) : ("UTC" + tzOffset);
+        }
+
+        // 创建地图实例，GL 版命名空间为 BMapGL
+        var map = new BMapGL.Map("allmap");
+        map.centerAndZoom(new BMapGL.Point(105.0, 30.0), 3);
+        map.enableScrollWheelZoom(true);
+
+        // 切换为地球模式（三维地球渲染）
+        map.setMapType(BMAP_EARTH_MAP);
+
+        // 开启地球模式下的大气层、星空背景、云层效果
+        map.setDisplayOptions({
+            atmosphere: true,
+            starrySky: true,
+            showCloud: true,
+            fog: true
+        });
+
+        // 点击地球，弹出该位置的当地时间信息窗
+        map.addEventListener('click', function (e) {
+            if (!e || !e.latlng) {
+                return;
+            }
+            var lng = e.latlng.lng;
+            var lat = e.latlng.lat;
+
+            var tzOffset = getTimezoneOffsetByLng(lng);
+            var localTimeInfo = calcLocalTimeByOffset(tzOffset);
+            var tzLabel = formatTzLabel(tzOffset);
+
+            var lngText = lng.toFixed(4) + "°" + (lng >= 0 ? "E" : "W");
+            var latText = lat.toFixed(4) + "°" + (lat >= 0 ? "N" : "S");
+
+            var content = document.createElement("div");
+            content.className = "bmap-info-box";
+
+            var titleDiv = document.createElement("div");
+            titleDiv.className = "bmap-info-title";
+            titleDiv.textContent = "点击位置当地时间";
+            content.appendChild(titleDiv);
+
+            var rowLng = document.createElement("div");
+            rowLng.className = "bmap-info-row";
+            var lngLabel = document.createElement("span");
+            lngLabel.className = "label";
+            lngLabel.textContent = "经度";
+            var lngValue = document.createElement("span");
+            lngValue.className = "value";
+            lngValue.textContent = lngText;
+            rowLng.appendChild(lngLabel);
+            rowLng.appendChild(lngValue);
+            content.appendChild(rowLng);
+
+            var rowLat = document.createElement("div");
+            rowLat.className = "bmap-info-row";
+            var latLabel = document.createElement("span");
+            latLabel.className = "label";
+            latLabel.textContent = "纬度";
+            var latValue = document.createElement("span");
+            latValue.className = "value";
+            latValue.textContent = latText;
+            rowLat.appendChild(latLabel);
+            rowLat.appendChild(latValue);
+            content.appendChild(rowLat);
+
+            var rowTz = document.createElement("div");
+            rowTz.className = "bmap-info-row";
+            var tzLabelSpan = document.createElement("span");
+            tzLabelSpan.className = "label";
+            tzLabelSpan.textContent = "估算时区";
+            var tzValueSpan = document.createElement("span");
+            tzValueSpan.className = "value";
+            tzValueSpan.textContent = tzLabel;
+            rowTz.appendChild(tzLabelSpan);
+            rowTz.appendChild(tzValueSpan);
+            content.appendChild(rowTz);
+
+            var timeBox = document.createElement("div");
+            timeBox.className = "bmap-info-time";
+            var timeValue = document.createElement("div");
+            timeValue.className = "time-value";
+            timeValue.textContent = localTimeInfo.dateStr + " " + localTimeInfo.timeStr;
+            var timeLabel = document.createElement("div");
+            timeLabel.className = "time-label";
+            timeLabel.textContent = "当地估算时间（基于北京时间 2026-09-13 16:06:38 换算）";
+            timeBox.appendChild(timeValue);
+            timeBox.appendChild(timeLabel);
+            content.appendChild(timeBox);
+
+            var infoWindow = new BMapGL.InfoWindow(content, {
+                width: 260,
+                height: 0,
+                title: ""
+            });
+
+            map.openInfoWindow(infoWindow, e.latlng);
+        });
+    </script>
+</body>
+</html>
