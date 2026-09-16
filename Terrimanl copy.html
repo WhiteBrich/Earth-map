@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>三维地形互动底图 · 地形剖面图</title>
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        #cesiumContainer { width: 100%; height: 100%; }
+
+        /* 顶部按钮栏 */
+        .topBtn {
+            position: absolute; top: 20px; z-index: 999;
+            padding: 10px 18px; font-size: 14px; cursor: pointer;
+            background: rgba(20, 30, 40, 0.88); color: #4fc3f7;
+            border: 1px solid #4fc3f7; border-radius: 4px;
+            font-family: "Microsoft YaHei", sans-serif; font-weight: 600;
+            transition: all 0.2s;
+        }
+        .topBtn:hover { background: rgba(79, 195, 247, 0.2); }
+        .topBtn.active { background: #ff5252; color: #fff; border-color: #ff5252; }
+
+        #markBtn { left: 20px; }
+        #profileBtn { left: 160px; }
+
+        /* 搜索面板 */
+        #searchPanel {
+            position: absolute; top: 20px; left: 300px; z-index: 999;
+            display: flex; gap: 8px; font-family: "Microsoft YaHei", sans-serif;
+        }
+        #searchInput {
+            width: 220px; padding: 10px 14px; font-size: 14px;
+            border: 1px solid #4fc3f7; border-radius: 4px;
+            background: rgba(20, 30, 40, 0.88); color: #fff; outline: none;
+        }
+        #searchInput::placeholder { color: #aaa; }
+        #searchBtn {
+            padding: 10px 18px; font-size: 14px; cursor: pointer;
+            background: #4fc3f7; color: #0a1929; border: none;
+            border-radius: 4px; font-weight: 600;
+        }
+        #searchBtn:hover { background: #81d4fa; }
+        #searchBtn:disabled { background: #555; color: #999; cursor: not-allowed; }
+
+        /* 搜索结果列表 */
+        #resultList {
+            position: absolute; top: 62px; left: 300px; width: 320px;
+            max-height: 300px; overflow-y: auto;
+            background: rgba(20, 30, 40, 0.95);
+            border: 1px solid #4fc3f7; border-radius: 0 0 6px 6px;
+            z-index: 1000; display: none;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+        #resultList .result-item {
+            padding: 10px 14px; color: #ddd; font-size: 13px;
+            cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.08);
+            line-height: 1.5;
+        }
+        #resultList .result-item:hover { background: rgba(79, 195, 247, 0.2); }
+        #resultList .result-item .item-name { color: #4fc3f7; font-weight: 600; }
+        #resultList .result-item .item-addr { color: #999; font-size: 12px; }
+
+        /* 剖面图面板 */
+        #profilePanel {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            height: 220px; background: rgba(10, 20, 30, 0.95);
+            border-top: 2px solid #4fc3f7; z-index: 998;
+            display: none; font-family: "Microsoft YaHei", sans-serif;
+        }
+        #profilePanel.visible { display: block; }
+        #profileHeader {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 20px; border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        #profileHeader .title { color: #4fc3f7; font-size: 14px; font-weight: 600; }
+        #profileHeader .actions { display: flex; gap: 8px; }
+        #profileHeader button {
+            padding: 4px 12px; font-size: 12px; cursor: pointer;
+            background: transparent; color: #4fc3f7;
+            border: 1px solid #4fc3f7; border-radius: 3px;
+        }
+        #profileHeader button:hover { background: rgba(79,195,247,0.2); }
+        #profileCanvas {
+            display: block; width: 100%; height: 170px;
+        }
+
+        /* 状态提示 */
+        #statusMsg {
+            position: absolute; bottom: 240px; left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8); color: #ddd;
+            padding: 10px 24px; border-radius: 20px;
+            font-size: 13px; font-family: "Microsoft YaHei", sans-serif;
+            display: none; z-index: 1001; white-space: nowrap;
+        }
+    </style>
+
+    <link rel="stylesheet"
+          href="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Widgets/widgets.css">
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+
+    <button id="markBtn" class="topBtn">标记模式：关</button>
+    <button id="profileBtn" class="topBtn">剖面图模式：关</button>
+
+    <div id="searchPanel">
+        <input id="searchInput" type="text" placeholder="搜索地名，如：北京、广州" />
+        <button id="searchBtn">搜索</button>
+    </div>
+    <div id="resultList"></div>
+
+    <div id="profilePanel">
+        <div id="profileHeader">
+            <span class="title" id="profileTitle">地形剖面图</span>
+            <div class="actions">
+                <button id="profileClearBtn">清除剖面</button>
+                <button id="profileCloseBtn">关闭面板</button>
+            </div>
+        </div>
+        <canvas id="profileCanvas"></canvas>
+    </div>
+
+    <div id="statusMsg"></div>
+
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Cesium.js"></script>
+
+    <script>
+    // ============================================================
+    // 配置区
+    // ============================================================
+    const TIANDITU_KEY = '67202ad0231a8193b8cdda3816077687';
+    const CESIUM_ION_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6IjlVZENLWEkzMklfRERnOEUiLCJqdGkiOiI4ZTNiNjM4OC03NGQ0LTQxYTYtYmU1OS03NzY2YWI3MTM0ODIiLCJpZCI6NDkyNTMzLCJzdWIiOiJXaGl0ZUJyaWNoIiwiaXNzIjoiaHR0cHM6Ly9hcGkuY2VzaXVtLmNvbSIsImF1ZCI6IldoaXRlQnJpY2hfZGVmYXVsdCIsImlhdCI6MTc4OTU1OTQ3MH0.9UqNi6F0cDZkv9bQze3iZZqmrtQFDB6ERuspXtnVqLQ'; // ← 替换为你的 Cesium ion Access Token
+    const subdomains = ['0','1','2','3','4','5','6','7'];
+
+    Cesium.Ion.defaultAccessToken = CESIUM_ION_TOKEN;
+
+    let globalTerrainProvider = null;
+
+    // ============================================================
+    // 1. 初始化 Viewer
+    // ============================================================
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+        baseLayerPicker: false,
+        geocoder: false,
+        homeButton: true,
+        sceneModePicker: false,
+        navigationHelpButton: false,
+        animation: false,
+        timeline: false,
+        fullscreenButton: true,
+        infoBox: false,
+        selectionIndicator: false,
+        baseLayer: false
+    });
+
+    viewer.cesiumWidget.creditContainer.style.display = 'none';
+
+    // 请求限流：缓解 429 Too Many Requests
+    Cesium.RequestScheduler.maximumRequests = 20;
+    Cesium.RequestScheduler.maximumRequestsPerServer = 10;
+
+    // ============================================================
+    // 2. 加载 Cesium 官方世界地形
+    // ============================================================
+    async function initTerrain() {
+        try {
+            const terrainProvider = await Cesium.createWorldTerrainAsync({
+                requestVertexNormals: true,
+                requestWaterMask: true
+            });
+            viewer.terrainProvider = terrainProvider;
+            viewer.scene.globe.depthTestAgainstTerrain = true;
+            globalTerrainProvider = terrainProvider;
+            console.log('✅ Cesium 官方世界地形加载成功');
+        } catch (error) {
+            console.error('❌ 地形加载失败，回退到椭球地形：', error);
+            viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+            viewer.scene.globe.depthTestAgainstTerrain = false;
+        }
+    }
+    initTerrain();
+
+    // ============================================================
+    // 3. 天地图影像底图 + 注记
+    // ============================================================
+    viewer.imageryLayers.addImageryProvider(
+        new Cesium.WebMapTileServiceImageryProvider({
+            url: `https://t{s}.tianditu.gov.cn/img_w/wmts?tk=${TIANDITU_KEY}`,
+            layer: 'img', style: 'default', format: 'tiles',
+            tileMatrixSetID: 'w', subdomains, maximumLevel: 18
+        })
+    );
+    viewer.imageryLayers.addImageryProvider(
+        new Cesium.WebMapTileServiceImageryProvider({
+            url: `https://t{s}.tianditu.gov.cn/cia_w/wmts?tk=${TIANDITU_KEY}`,
+            layer: 'cia', style: 'default', format: 'tiles',
+            tileMatrixSetID: 'w', subdomains, maximumLevel: 18
+        })
+    );
+
+    // ============================================================
+    // 4. 初始视角
+    // ============================================================
+    viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(105, 35, 12000000),
+        orientation: {
+            heading: Cesium.Math.toRadians(0),
+            pitch: Cesium.Math.toRadians(-60),
+            roll: 0
+        }
+    });
+
+    // ============================================================
+    // 5. 通用工具
+    // ============================================================
+    const statusMsg = document.getElementById('statusMsg');
+
+    function showStatus(msg, duration = 3000) {
+        statusMsg.textContent = msg;
+        statusMsg.style.display = 'block';
+        if (duration > 0) {
+            setTimeout(() => { statusMsg.style.display = 'none'; }, duration);
+        }
+    }
+
+    // ============================================================
+    // 6. 搜索功能
+    // ============================================================
+    const searchInput = document.getElementById('searchInput');
+    const searchBtn = document.getElementById('searchBtn');
+    const resultList = document.getElementById('resultList');
+
+    let searchMarker = null;
+
+    function hideResultList() {
+        resultList.style.display = 'none';
+        resultList.innerHTML = '';
+    }
+
+    async function searchAdministrative(keyword) {
+        const url = `https://api.tianditu.gov.cn/v2/administrative?keyword=${encodeURIComponent(keyword)}&childLevel=0&extensions=false&tk=${TIANDITU_KEY}`;
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            const ok = data.status === 200 || data.status === 0 || data.status?.infocode === 0;
+            if (ok && data.data?.district?.length > 0) {
+                return data.data.district.map(item => ({
+                    name: item.name,
+                    lonlat: `${item.center.lng},${item.center.lat}`,
+                    address: `行政区划（${item.gb || ''}）`,
+                    isAdmin: true
+                }));
+            }
+        } catch (err) { console.warn('行政区划搜索失败：', err); }
+        return [];
+    }
+
+    async function searchPOI(keyword) {
+        const postStr = {
+            keyWord: keyword, level: 12, mapBound: '-180,-90,180,90',
+            queryType: 1, start: 0, count: 10
+        };
+        const url = `https://api.tianditu.gov.cn/v2/search?postStr=${encodeURIComponent(JSON.stringify(postStr))}&type=query&tk=${TIANDITU_KEY}`;
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            const statusCode = data.status?.infocode || data.status;
+            if (statusCode !== 0 && statusCode !== '0' && statusCode !== 1000) return [];
+            const pois = data.pois || data.result || [];
+            return pois.map(item => {
+                let lon = 0, lat = 0;
+                if (item.lonlat) {
+                    const parts = item.lonlat.split(',');
+                    lon = parseFloat(parts[0]); lat = parseFloat(parts[1]);
+                }
+                return {
+                    name: item.name || item.keyword || '未知地点',
+                    lonlat: `${lon},${lat}`,
+                    address: item.address || '',
+                    isAdmin: false
+                };
+            });
+        } catch (err) { console.warn('POI搜索失败：', err); return []; }
+    }
+
+    async function doSearch() {
+        const keyword = searchInput.value.trim();
+        if (!keyword) { showStatus('请输入搜索关键词'); return; }
+
+        searchBtn.disabled = true;
+        searchBtn.textContent = '搜索中...';
+        hideResultList();
+        showStatus('正在搜索...', 0);
+
+        let results = await searchAdministrative(keyword);
+        if (results.length === 0) results = await searchPOI(keyword);
+
+        if (results.length === 0) {
+            showStatus('未找到相关地点，请尝试其他关键词');
+            searchBtn.disabled = false;
+            searchBtn.textContent = '搜索';
+            return;
+        }
+
+        renderResults(results);
+        showStatus(`找到 ${results.length} 个结果，点击条目跳转`);
+        searchBtn.disabled = false;
+        searchBtn.textContent = '搜索';
+    }
+
+    function renderResults(results) {
+        resultList.innerHTML = '';
+        results.forEach((item, index) => {
+            const div = document.createElement('div');
+            div.className = 'result-item';
+            const [lon, lat] = item.lonlat.split(',').map(Number);
+            const tag = item.isAdmin ? '【行政区划】' : '';
+            div.innerHTML = `
+                <div class="item-name">${index + 1}. ${tag}${item.name}</div>
+                <div class="item-addr">${item.address || `经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°`}</div>
+            `;
+            div.addEventListener('click', () => {
+                flyToLocation(lon, lat, item.name, item.isAdmin);
+                hideResultList();
+                searchInput.value = item.name;
+            });
+            resultList.appendChild(div);
+        });
+        resultList.style.display = 'block';
+    }
+
+    function flyToLocation(lon, lat, name, isAdmin) {
+        if (searchMarker) { viewer.entities.remove(searchMarker); searchMarker = null; }
+        searchMarker = viewer.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(lon, lat),
+            point: {
+                pixelSize: 12, color: Cesium.Color.RED,
+                outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            },
+            label: {
+                text: name, font: 'bold 14px "Microsoft YaHei", sans-serif',
+                fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                pixelOffset: new Cesium.Cartesian2(0, -24),
+                eyeOffset: new Cesium.Cartesian3(0, 0, -50000)
+            }
+        });
+        const height = isAdmin ? 200000 : 8000;
+        viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+            orientation: {
+                heading: Cesium.Math.toRadians(0),
+                pitch: Cesium.Math.toRadians(isAdmin ? -60 : -65),
+                roll: 0
+            },
+            duration: 5,
+            complete: () => showStatus(`已定位到：${name}`, 2000)
+        });
+    }
+
+    searchBtn.addEventListener('click', doSearch);
+    searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+    document.addEventListener('click', e => {
+        const panel = document.getElementById('searchPanel');
+        const list = document.getElementById('resultList');
+        if (!panel.contains(e.target) && !list.contains(e.target)) hideResultList();
+    });
+
+    // ============================================================
+    // 7. 标记模式
+    // ============================================================
+    const markBtn = document.getElementById('markBtn');
+    let markMode = false;
+    let userMarkers = [];
+
+    markBtn.addEventListener('click', () => {
+        // 关闭剖面图模式
+        if (!markMode && profileMode) toggleProfileMode();
+
+        markMode = !markMode;
+        markBtn.textContent = markMode ? '标记模式：开' : '标记模式：关';
+        markBtn.classList.toggle('active', markMode);
+        viewer.scene.canvas.style.cursor = markMode ? 'crosshair' : 'default';
+
+        if (markMode) {
+            showStatus('标记模式已开启，点击地球放置标记', 3000);
+        } else {
+            userMarkers.forEach(m => viewer.entities.remove(m));
+            userMarkers = [];
+            showStatus('标记模式已关闭，所有标记已清除', 3000);
+        }
+    });
+
+    // ============================================================
+    // 8. 剖面图模式
+    // ============================================================
+    const profileBtn = document.getElementById('profileBtn');
+    const profilePanel = document.getElementById('profilePanel');
+    const profileCanvas = document.getElementById('profileCanvas');
+    const profileTitle = document.getElementById('profileTitle');
+    const profileClearBtn = document.getElementById('profileClearBtn');
+    const profileCloseBtn = document.getElementById('profileCloseBtn');
+
+    let profileMode = false;
+    let profilePoints = [];       // 存放起点、终点经纬度
+    let profileEntities = [];     // 存放线条、端点等实体
+    let profileRubberLine = null; // 鼠标移动时的预览线
+
+    function toggleProfileMode() {
+        // 关闭标记模式
+        if (!profileMode && markMode) markBtn.click();
+
+        profileMode = !profileMode;
+        profileBtn.textContent = profileMode ? '剖面图模式：开' : '剖面图模式：关';
+        profileBtn.classList.toggle('active', profileMode);
+        viewer.scene.canvas.style.cursor = profileMode ? 'crosshair' : 'default';
+
+        if (profileMode) {
+            profilePoints = [];
+            showStatus('剖面图模式已开启，点击地图选择起点', 3000);
+        } else {
+            clearProfile();
+            showStatus('剖面图模式已关闭', 2000);
+        }
+    }
+
+    function clearProfile() {
+        profilePoints = [];
+        profileEntities.forEach(e => viewer.entities.remove(e));
+        profileEntities = [];
+        if (profileRubberLine) {
+            viewer.entities.remove(profileRubberLine);
+            profileRubberLine = null;
+        }
+        profilePanel.classList.remove('visible');
+    }
+
+    profileBtn.addEventListener('click', toggleProfileMode);
+    profileClearBtn.addEventListener('click', () => {
+        clearProfile();
+        if (profileMode) showStatus('已清除，请点击地图选择起点', 2000);
+    });
+    profileCloseBtn.addEventListener('click', () => {
+        clearProfile();
+        if (profileMode) toggleProfileMode();
+    });
+
+    // ---------- 剖面图绘制核心 ----------
+    function drawProfile(lon1, lat1, lon2, lat2, positions) {
+        profilePanel.classList.add('visible');
+
+        // 适配 canvas 分辨率
+        const dpr = window.devicePixelRatio || 1;
+        const cssW = profileCanvas.clientWidth;
+        const cssH = profileCanvas.clientHeight;
+        profileCanvas.width = cssW * dpr;
+        profileCanvas.height = cssH * dpr;
+
+        const ctx = profileCanvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        const W = cssW, H = cssH;
+        ctx.clearRect(0, 0, W, H);
+
+        // 距离计算
+        const geodesic = new Cesium.EllipsoidGeodesic(
+            Cesium.Cartographic.fromDegrees(lon1, lat1),
+            Cesium.Cartographic.fromDegrees(lon2, lat2)
+        );
+        const totalDistKm = geodesic.surfaceDistance / 1000;
+
+        // 海拔范围
+        const heights = positions.map(p => p.height);
+        const minH = Math.min(...heights);
+        const maxH = Math.max(...heights);
+        const rangeH = Math.max(maxH - minH, 1);
+
+        const padding = { top: 36, right: 30, bottom: 30, left: 60 };
+        const plotW = W - padding.left - padding.right;
+        const plotH = H - padding.top - padding.bottom;
+
+        const xOf = i => padding.left + (i / (positions.length - 1)) * plotW;
+        const yOf = h => padding.top + plotH - ((h - minH) / rangeH) * plotH;
+
+        // 背景网格
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 5; i++) {
+            const y = padding.top + (plotH * i / 5);
+            ctx.beginPath(); ctx.moveTo(padding.left, y); ctx.lineTo(padding.left + plotW, y); ctx.stroke();
+        }
+
+        // 填充区域（渐变）
+        ctx.beginPath();
+        ctx.moveTo(xOf(0), yOf(positions[0].height));
+        for (let i = 1; i < positions.length; i++) {
+            ctx.lineTo(xOf(i), yOf(positions[i].height));
+        }
+        ctx.lineTo(xOf(positions.length - 1), padding.top + plotH);
+        ctx.lineTo(xOf(0), padding.top + plotH);
+        ctx.closePath();
+        const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + plotH);
+        gradient.addColorStop(0, 'rgba(79, 195, 247, 0.75)');
+        gradient.addColorStop(1, 'rgba(79, 195, 247, 0.1)');
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        // 轮廓线
+        ctx.beginPath();
+        ctx.moveTo(xOf(0), yOf(positions[0].height));
+        for (let i = 1; i < positions.length; i++) {
+            ctx.lineTo(xOf(i), yOf(positions[i].height));
+        }
+        ctx.strokeStyle = '#4fc3f7';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Y 轴刻度
+        ctx.fillStyle = '#aaa';
+        ctx.font = '11px "Microsoft YaHei"';
+        ctx.textAlign = 'right';
+        for (let i = 0; i <= 5; i++) {
+            const h = minH + (rangeH * i / 5);
+            const y = yOf(h);
+            ctx.fillText(h.toFixed(0) + 'm', padding.left - 8, y + 4);
+        }
+
+        // X 轴刻度
+        ctx.textAlign = 'center';
+        for (let i = 0; i <= 5; i++) {
+            const d = totalDistKm * i / 5;
+            const x = padding.left + (plotW * i / 5);
+            ctx.fillText(d.toFixed(1) + 'km', x, padding.top + plotH + 18);
+        }
+
+        // 起点终点标记
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'left';
+        ctx.fillText('起点', xOf(0), padding.top - 10);
+        ctx.textAlign = 'right';
+        ctx.fillText('终点', xOf(positions.length - 1), padding.top - 10);
+
+        // 顶部统计信息
+        ctx.fillStyle = '#4fc3f7';
+        ctx.font = 'bold 13px "Microsoft YaHei"';
+        ctx.textAlign = 'left';
+        ctx.fillText(
+            `水平距离：${totalDistKm.toFixed(2)} km　|　海拔：${minH.toFixed(0)} ~ ${maxH.toFixed(0)} m　|　相对高差：${(maxH - minH).toFixed(0)} m`,
+            padding.left, 22
+        );
+
+        profileTitle.textContent = `地形剖面图  ${lat1.toFixed(2)}°N ${lon1.toFixed(2)}°E  →  ${lat2.toFixed(2)}°N ${lon2.toFixed(2)}°E`;
+    }
+
+    // ---------- 采样并绘制 ----------
+    async function sampleAndDrawProfile(lon1, lat1, lon2, lat2) {
+        showStatus('正在采样地形，请稍候...', 0);
+
+        // 采样点数量：教学精度，100 个足够
+        const SAMPLE_COUNT = 100;
+        const cartographics = [];
+        for (let i = 0; i < SAMPLE_COUNT; i++) {
+            const t = i / (SAMPLE_COUNT - 1);
+            const lon = lon1 + (lon2 - lon1) * t;
+            const lat = lat1 + (lat2 - lat1) * t;
+            cartographics.push(Cesium.Cartographic.fromDegrees(lon, lat));
+        }
+
+        try {
+            let sampled;
+            if (globalTerrainProvider) {
+                sampled = await Cesium.sampleTerrainMostDetailed(
+                    globalTerrainProvider,
+                    cartographics
+                );
+            } else {
+                // 无地形时，使用 0 高度（平地剖面）
+                sampled = cartographics.map(c => {
+                    c.height = 0;
+                    return c;
+                });
+                showStatus('提示：地形服务未加载，剖面图为平地', 4000);
+            }
+            drawProfile(lon1, lat1, lon2, lat2, sampled);
+            if (globalTerrainProvider) showStatus('剖面图已生成', 2000);
+        } catch (err) {
+            console.error('地形采样失败：', err);
+            showStatus('地形采样失败，请检查 Cesium ion Token', 4000);
+        }
+    }
+
+    // ============================================================
+    // 9. 点击地图：标记 / 剖面 / 信息
+    // ============================================================
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+    handler.setInputAction(async function (click) {
+        const ray = viewer.camera.getPickRay(click.position);
+        if (!ray) return;
+
+        const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+        if (!cartesian) {
+            showStatus('未拾取到地表位置，请点击地球表面', 3000);
+            return;
+        }
+
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        const lon = Cesium.Math.toDegrees(cartographic.longitude);
+        const lat = Cesium.Math.toDegrees(cartographic.latitude);
+
+        // ---------- 剖面图模式 ----------
+        if (profileMode) {
+            profilePoints.push({ lon, lat });
+
+            // 添加端点小球
+            const pointEntity = viewer.entities.add({
+                position: Cesium.Cartesian3.fromDegrees(lon, lat),
+                point: {
+                    pixelSize: 10,
+                    color: profilePoints.length === 1 ? Cesium.Color.LIME : Cesium.Color.ORANGE,
+                    outlineColor: Cesium.Color.WHITE,
+                    outlineWidth: 2,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY
+                }
+            });
+            profileEntities.push(pointEntity);
+
+            if (profilePoints.length === 1) {
+                showStatus('起点已选，请点击终点位置', 3000);
+                return;
+            }
+
+            // 已选够两个点，绘制连线并采样
+            const p1 = profilePoints[0];
+            const p2 = profilePoints[1];
+
+            const lineEntity = viewer.entities.add({
+                polyline: {
+                    positions: Cesium.Cartesian3.fromDegreesArray([p1.lon, p1.lat, p2.lon, p2.lat]),
+                    width: 3,
+                    material: Cesium.Color.YELLOW,
+                    arcType: Cesium.ArcType.GEODESIC,
+                    clampToGround: true
+                }
+            });
+            profileEntities.push(lineEntity);
+
+            // 清除预览线
+            if (profileRubberLine) {
+                viewer.entities.remove(profileRubberLine);
+                profileRubberLine = null;
+            }
+
+            await sampleAndDrawProfile(p1.lon, p1.lat, p2.lon, p2.lat);
+            profilePoints = []; // 重置，可再次选择
+            return;
+        }
+
+        // ---------- 标记模式 ----------
+        if (markMode) {
+            const idx = userMarkers.length + 1;
+            const marker = viewer.entities.add({
+                position: Cesium.Cartesian3.fromDegrees(lon, lat),
+                point: {
+                    pixelSize: 14, color: Cesium.Color.ORANGE,
+                    outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY
+                },
+                label: {
+                    text: `标记 ${idx}`,
+                    font: 'bold 14px "Microsoft YaHei", sans-serif',
+                    fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                    pixelOffset: new Cesium.Cartesian2(0, -24),
+                    eyeOffset: new Cesium.Cartesian3(0, 0, -50000)
+                }
+            });
+            userMarkers.push(marker);
+            showStatus(`标记 ${idx}：经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°`, 3000);
+            return;
+        }
+
+        // ---------- 普通信息模式 ----------
+        showStatus(`经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　正在获取海拔...`, 0);
+        if (globalTerrainProvider) {
+            try {
+                const sampled = await Cesium.sampleTerrainMostDetailed(
+                    globalTerrainProvider,
+                    [Cesium.Cartographic.fromDegrees(lon, lat)]
+                );
+                showStatus(`经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　海拔 ${sampled[0].height.toFixed(1)} 米`, 4000);
+                return;
+            } catch (err) { console.warn('地形采样失败：', err); }
+        }
+        showStatus(`经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　海拔 ${cartographic.height.toFixed(1)} 米（近似）`, 4000);
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    // 鼠标移动时显示剖面图预览线
+    handler.setInputAction(function (movement) {
+        if (!profileMode || profilePoints.length !== 1) return;
+
+        const ray = viewer.camera.getPickRay(movement.endPosition);
+        if (!ray) return;
+        const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+        if (!cartesian) return;
+
+        const c = Cesium.Cartographic.fromCartesian(cartesian);
+        const lon = Cesium.Math.toDegrees(c.longitude);
+        const lat = Cesium.Math.toDegrees(c.latitude);
+        const p1 = profilePoints[0];
+
+        if (profileRubberLine) viewer.entities.remove(profileRubberLine);
+        profileRubberLine = viewer.entities.add({
+            polyline: {
+                positions: Cesium.Cartesian3.fromDegreesArray([p1.lon, p1.lat, lon, lat]),
+                width: 2,
+                material: new Cesium.PolylineDashMaterialProperty({
+                    color: Cesium.Color.YELLOW.withAlpha(0.7),
+                    dashLength: 12
+                }),
+                arcType: Cesium.ArcType.GEODESIC,
+                clampToGround: true
+            }
+        });
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+    console.log('✅ 三维地形互动底图初始化完成');
+    </script>
+</body>
+</html>
