@@ -156,8 +156,8 @@
     viewer.cesiumWidget.creditContainer.style.display = 'none';
 
     // 请求限流：缓解 429 Too Many Requests
-    Cesium.RequestScheduler.maximumRequests = 20;
-    Cesium.RequestScheduler.maximumRequestsPerServer = 10;
+    Cesium.RequestScheduler.maximumRequests = 8;
+    Cesium.RequestScheduler.maximumRequestsPerServer = 4;
 
     // ============================================================
     // 2. 加载 Cesium 官方世界地形
@@ -187,14 +187,14 @@
         new Cesium.WebMapTileServiceImageryProvider({
             url: `https://t{s}.tianditu.gov.cn/img_w/wmts?tk=${TIANDITU_KEY}`,
             layer: 'img', style: 'default', format: 'tiles',
-            tileMatrixSetID: 'w', subdomains, maximumLevel: 18
+            tileMatrixSetID: 'w', subdomains, maximumLevel: 15
         })
     );
     viewer.imageryLayers.addImageryProvider(
         new Cesium.WebMapTileServiceImageryProvider({
             url: `https://t{s}.tianditu.gov.cn/cia_w/wmts?tk=${TIANDITU_KEY}`,
             layer: 'cia', style: 'default', format: 'tiles',
-            tileMatrixSetID: 'w', subdomains, maximumLevel: 18
+            tileMatrixSetID: 'w', subdomains, maximumLevel: 15
         })
     );
 
