@@ -226,32 +226,33 @@
 
         // ---------- 8. 时间显示更新函数 ----------
         function updateTimeDisplay(data) {
-            if (!data) return;
+    if (!data) return;
 
-            const { lon, lat, tzOffsetHours } = data;
+    const { lon, lat, tzOffsetHours } = data;
 
-            // 当前 UTC 时间戳
-            const utcMs = Date.now();
+    // 当前 UTC 时间戳
+    const utcMs = Date.now();
 
-            // 当地时间 = UTC + 时区偏移
-            const localMs = utcMs + tzOffsetHours * 3600000;
-            const localDate = new Date(localMs);
+    // 当地时间 = UTC + 时区偏移（本质是"加上偏移后的绝对时刻"）
+    const localMs = utcMs + tzOffsetHours * 3600000;
+    const localDate = new Date(localMs);
 
-            const pad = n => String(n).padStart(2, '0');
-            const timeStr = `${pad(localDate.getHours())}:${pad(localDate.getMinutes())}:${pad(localDate.getSeconds())}`;
-            const dateStr = `${localDate.getFullYear()}年${pad(localDate.getMonth() + 1)}月${pad(localDate.getDate())}日`;
-            
-            // 将时间面板的时区格式改为中文
-            let offsetStr = '';
-            if (tzOffsetHours === 0) offsetStr = '中时区';
-            else if (tzOffsetHours > 0) offsetStr = '东' + tzOffsetHours + '区';
-            else offsetStr = '西' + Math.abs(tzOffsetHours) + '区';
+    const pad = n => String(n).padStart(2, '0');
 
-            document.getElementById('localTime').textContent = timeStr;
-            document.getElementById('localDate').textContent = dateStr;
-            document.getElementById('coordInfo').textContent =
-                `经度 ${lon.toFixed(2)}°　纬度 ${lat.toFixed(2)}°　${offsetStr}`;
-        }
+    // ✅ 用 UTC 方法读取，避免叠加浏览器本地时区
+    const timeStr = `${pad(localDate.getUTCHours())}:${pad(localDate.getUTCMinutes())}:${pad(localDate.getUTCSeconds())}`;
+    const dateStr = `${localDate.getUTCFullYear()}年${pad(localDate.getUTCMonth() + 1)}月${pad(localDate.getUTCDate())}日`;
+
+    let offsetStr = '';
+    if (tzOffsetHours === 0) offsetStr = '中时区';
+    else if (tzOffsetHours > 0) offsetStr = '东' + tzOffsetHours + '区';
+    else offsetStr = '西' + Math.abs(tzOffsetHours) + '区';
+
+    document.getElementById('localTime').textContent = timeStr;
+    document.getElementById('localDate').textContent = dateStr;
+    document.getElementById('coordInfo').textContent =
+        `经度 ${lon.toFixed(2)}°　纬度 ${lat.toFixed(2)}°　${offsetStr}`;
+}
 
         // ---------- 9. 鼠标点击事件 ----------
         const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
