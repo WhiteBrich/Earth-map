@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>三维地形互动底图 · 地形剖面图</title>
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        #cesiumContainer { width: 100%; height: 100%; }
+
+        /* 顶部按钮栏 */
+        .topBtn {
+            position: absolute; top: 20px; z-index: 999;
+            padding: 10px 18px; font-size: 14px; cursor: pointer;
+            background: rgba(20, 30, 40, 0.88); color: #4fc3f7;
+            border: 1px solid #4fc3f7; border-radius: 4px;
+            font-family: "Microsoft YaHei", sans-serif; font-weight: 600;
+            transition: all 0.2s;
+        }
+        .topBtn:hover { background: rgba(79, 195, 247, 0.2); }
+        .topBtn.active { background: #ff5252; color: #fff; border-color: #ff5252; }
+
+        #markBtn { left: 20px; }
+        #profileBtn { left: 160px; }
+        #sjyBtn { top: 70px; left: 20px; }
+
+        /* 搜索面板 */
+        #searchPanel {
+            position: absolute; top: 20px; left: 300px; z-index: 999;
+            display: flex; gap: 8px; font-family: "Microsoft YaHei", sans-serif;
+        }
+        #searchInput {
+            width: 220px; padding: 10px 14px; font-size: 14px;
+            border: 1px solid #4fc3f7; border-radius: 4px;
+            background: rgba(20, 30, 40, 0.88); color: #fff; outline: none;
+        }
+        #searchInput::placeholder { color: #aaa; }
+        #searchBtn {
+            padding: 10px 18px; font-size: 14px; cursor: pointer;
+            background: #4fc3f7; color: #0a1929; border: none;
+            border-radius: 4px; font-weight: 600;
+        }
+        #searchBtn:hover { background: #81d4fa; }
+        #searchBtn:disabled { background: #555; color: #999; cursor: not-allowed; }
+
+        /* 搜索结果列表 */
+        #resultList {
+            position: absolute; top: 62px; left: 300px; width: 320px;
+            max-height: 300px; overflow-y: auto;
+            background: rgba(20, 30, 40, 0.95);
+            border: 1px solid #4fc3f7; border-radius: 0 0 6px 6px;
+            z-index: 1000; display: none;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+        #resultList .result-item {
+            padding: 10px 14px; color: #ddd; font-size: 13px;
+            cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.08);
+            line-height: 1.5;
+        }
+        #resultList .result-item:hover { background: rgba(79, 195, 247, 0.2); }
+        #resultList .result-item .item-name { color: #4fc3f7; font-weight: 600; }
+        #resultList .result-item .item-addr { color: #999; font-size: 12px; }
+
+        /* 剖面图面板 */
+        #profilePanel {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            height: 220px; background: rgba(10, 20, 30, 0.95);
+            border-top: 2px solid #4fc3f7; z-index: 998;
+            display: none; font-family: "Microsoft YaHei", sans-serif;
+        }
+        #profilePanel.visible { display: block; }
+        #profileHeader {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 20px; border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        #profileHeader .title { color: #4fc3f7; font-size: 14px; font-weight: 600; }
+        #profileHeader .actions { display: flex; gap: 8px; }
+        #profileHeader button {
+            padding: 4px 12px; font-size: 12px; cursor: pointer;
+            background: transparent; color: #4fc3f7;
+            border: 1px solid #4fc3f7; border-radius: 3px;
+        }
+        #profileHeader button:hover { background: rgba(79,195,247,0.2); }
+        #profileCanvas {
+            display: block; width: 100%; height: 170px;
+        }
+
+        /* 状态提示 */
+        #statusMsg {
+            position: absolute; bottom: 240px; left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8); color: #ddd;
+            padding: 10px 24px; border-radius: 20px;
+            font-size: 13px; font-family: "Microsoft YaHei", sans-serif;
+            display: none; z-index: 1001; white-space: nowrap;
+        }
+    </style>
+
+    <link rel="stylesheet"
+          href="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Widgets/widgets.css">
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+
+    <button id="markBtn" class="topBtn">标记模式：关</button>
+    <button id="profileBtn" class="topBtn">剖面图模式：关</button>
+    <button id="sjyBtn" class="topBtn active">三江源图层：开</button>
+
+    <div id="searchPanel">
+        <input id="searchInput" type="text" placeholder="搜索地名，如：北京、广州" />
+        <button id="searchBtn">搜索</button>
+    </div>
+    <div id="resultList"></div>
+
+    <div id="profilePanel">
+        <div id="profileHeader">
+            <span class="title" id="profileTitle">地形剖面图</span>
+            <div class="actions">
+                <button id="profileClearBtn">清除剖面</button>
+                <button id="profileCloseBtn">关闭面板</button>
+            </div>
+        </div>
+        <canvas id="profileCanvas"></canvas>
+    </div>
+
+    <div id="statusMsg"></div>
+
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Cesium.js"></script>
+
+    <script>
+    // ============================================================
+    // 配置区
+    // ============================================================
+    const TIANDITU_KEY = '67202ad0231a8193b8cdda3816077687';
+    const CESIUM_ION_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6IjlVZENLWEkzMklfRERnOEUiLCJqdGkiOiI4ZTNiNjM4OC03NGQ0LTQxYTYtYmU1OS03NzY2YWI3MTM0ODIiLCJpZCI6NDkyNTMzLCJzdWIiOiJXaGl0ZUJyaWNoIiwiaXNzIjoiaHR0cHM6Ly9hcGkuY2VzaXVtLmNvbSIsImF1ZCI6IldoaXRlQnJpY2hfZGVmYXVsdCIsImlhdCI6MTc4OTU1OTQ3MH0.9UqNi6F0cDZkv9bQze3iZZqmrtQFDB6ERuspXtnVqLQ'; // ← 替换为你的 Cesium ion Access Token
+    const subdomains = ['0','1','2','3','4','5','6','7'];
+
+    Cesium.Ion.defaultAccessToken = CESIUM_ION_TOKEN;
+
+    let globalTerrainProvider = null;
+
+    // ============================================================
+    // 1. 初始化 Viewer
+    // ============================================================
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+        baseLayerPicker: false,
+        geocoder: false,
+        homeButton: true,
+        sceneModePicker: false,
+        navigationHelpButton: false,
+        animation: false,
+        timeline: false,
+        fullscreenButton: true,
+        infoBox: false,
+        selectionIndicator: false,
+        baseLayer: false
+    });
+
+    viewer.cesiumWidget.creditContainer.style.display = 'none';
+
+    // 请求限流：缓解 429 Too Many Requests
+    Cesium.RequestScheduler.maximumRequests = 20;
+    Cesium.RequestScheduler.maximumRequestsPerServer = 10;
+
+    // ============================================================
+    // 2. 加载 Cesium 官方世界地形
+    // ============================================================
+    async function initTerrain() {
+        try {
+            const terrainProvider = await Cesium.createWorldTerrainAsync({
+                requestVertexNormals: true,
+                requestWaterMask: true
+            });
+            viewer.terrainProvider = terrainProvider;
+            viewer.scene.globe.depthTestAgainstTerrain = true;
+            globalTerrainProvider = terrainProvider;
+            console.log('✅ Cesium 官方世界地形加载成功');
+        } catch (error) {
+            console.error('❌ 地形加载失败，回退到椭球地形：', error);
+            viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+            viewer.scene.globe.depthTestAgainstTerrain = false;
+        }
+    }
+    initTerrain();
+
+    // ============================================================
+    // 3. 天地图影像底图 + 注记
+    // ============================================================
+    viewer.imageryLayers.addImageryProvider(
+        new Cesium.WebMapTileServiceImageryProvider({
+            url: `https://t{s}.tianditu.gov.cn/img_w/wmts?tk=${TIANDITU_KEY}`,
+            layer: 'img', style: 'default', format: 'tiles',
+            tileMatrixSetID: 'w', subdomains, maximumLevel: 18
+        })
+    );
+    viewer.imageryLayers.addImageryProvider(
+        new Cesium.WebMapTileServiceImageryProvider({
+            url: `https://t{s}.tianditu.gov.cn/cia_w/wmts?tk=${TIANDITU_KEY}`,
+            layer: 'cia', style: 'default', format: 'tiles',
+            tileMatrixSetID: 'w', subdomains, maximumLevel: 18
+        })
+    );
+
+    // ============================================================
+    // 4. 初始视角
+    // ============================================================
+    viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(105, 35, 12000000),
+        orientation: {
+            heading: Cesium.Math.toRadians(0),
+            pitch: Cesium.Math.toRadians(-60),
+            roll: 0
+        }
+    });
+
+    // ============================================================
+    // 5. 通用工具
+    // ============================================================
+    const statusMsg = document.getElementById('statusMsg');
+
+    function showStatus(msg, duration = 3000) {
+        statusMsg.textContent = msg;
+        statusMsg.style.display = 'block';
+        if (duration > 0) {
+            setTimeout(() => { statusMsg.style.display = 'none'; }, duration);
+        }
+    }
+
+    // ============================================================
+    // 6. 搜索功能
+    // ============================================================
+    const searchInput = document.getElementById('searchInput');
+    const searchBtn = document.getElementById('searchBtn');
+    const resultList = document.getElementById('resultList');
+
+    let searchMarker = null;
+
+    function hideResultList() {
+        resultList.style.display = 'none';
+        resultList.innerHTML = '';
+    }
+
+    async function searchAdministrative(keyword) {
+        const url = `https://api.tianditu.gov.cn/v2/administrative?keyword=${encodeURIComponent(keyword)}&childLevel=0&extensions=false&tk=${TIANDITU_KEY}`;
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            const ok = data.status === 200 || data.status === 0 || data.status?.infocode === 0;
+            if (ok && data.data?.district?.length > 0) {
+                return data.data.district.map(item => ({
+                    name: item.name,
+                    lonlat: `${item.center.lng},${item.center.lat}`,
+                    address: `行政区划（${item.gb || ''}）`,
+                    isAdmin: true
+                }));
+            }
+        } catch (err) { console.warn('行政区划搜索失败：', err); }
+        return [];
+    }
+
+    async function searchPOI(keyword) {
+        const postStr = {
+            keyWord: keyword, level: 12, mapBound: '-180,-90,180,90',
+            queryType: 1, start: 0, count: 10
+        };
+        const url = `https://api.tianditu.gov.cn/v2/search?postStr=${encodeURIComponent(JSON.stringify(postStr))}&type=query&tk=${TIANDITU_KEY}`;
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            const statusCode = data.status?.infocode || data.status;
+            if (statusCode !== 0 && statusCode !== '0' && statusCode !== 1000) return [];
+            const pois = data.pois || data.result || [];
+            return pois.map(item => {
+                let lon = 0, lat = 0;
+                if (item.lonlat) {
+                    const parts = item.lonlat.split(',');
+                    lon = parseFloat(parts[0]); lat = parseFloat(parts[1]);
+                }
+                return {
+                    name: item.name || item.keyword || '未知地点',
+                    lonlat: `${lon},${lat}`,
+                    address: item.address || '',
+                    isAdmin: false
+                };
+            });
+        } catch (err) { console.warn('POI搜索失败：', err); return []; }
+    }
+
+    async function doSearch() {
+        const keyword = searchInput.value.trim();
+        if (!keyword) { showStatus('请输入搜索关键词'); return; }
+
+        searchBtn.disabled = true;
+        searchBtn.textContent = '搜索中...';
+        hideResultList();
+        showStatus('正在搜索...', 0);
+
+        let results = await searchAdministrative(keyword);
+        if (results.length === 0) results = await searchPOI(keyword);
+
+        if (results.length === 0) {
+            showStatus('未找到相关地点，请尝试其他关键词');
+            searchBtn.disabled = false;
+            searchBtn.textContent = '搜索';
+            return;
+        }
+
+        renderResults(results);
+        showStatus(`找到 ${results.length} 个结果，点击条目跳转`);
+        searchBtn.disabled = false;
+        searchBtn.textContent = '搜索';
+    }
+
+    function renderResults(results) {
+        resultList.innerHTML = '';
+        results.forEach((item, index) => {
+            const div = document.createElement('div');
+            div.className = 'result-item';
+            const [lon, lat] = item.lonlat.split(',').map(Number);
+            const tag = item.isAdmin ? '【行政区划】' : '';
+            div.innerHTML = `
+                <div class="item-name">${index + 1}. ${tag}${item.name}</div>
+                <div class="item-addr">${item.address || `经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°`}</div>
+            `;
+            div.addEventListener('click', () => {
+                flyToLocation(lon, lat, item.name, item.isAdmin);
+                hideResultList();
+                searchInput.value = item.name;
+            });
+            resultList.appendChild(div);
+        });
+        resultList.style.display = 'block';
+    }
+
+    function flyToLocation(lon, lat, name, isAdmin) {
+        if (searchMarker) { viewer.entities.remove(searchMarker); searchMarker = null; }
+        searchMarker = viewer.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(lon, lat),
+            point: {
+                pixelSize: 12, color: Cesium.Color.RED,
+                outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            },
+            label: {
+                text: name, font: 'bold 14px "Microsoft YaHei", sans-serif',
+                fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                pixelOffset: new Cesium.Cartesian2(0, -24),
+                eyeOffset: new Cesium.Cartesian3(0, 0, -50000)
+            }
+        });
+        const height = isAdmin ? 200000 : 8000;
+        viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+            orientation: {
+                heading: Cesium.Math.toRadians(0),
+                pitch: Cesium.Math.toRadians(isAdmin ? -60 : -65),
+                roll: 0
+            },
+            duration: 5,
+            complete: () => showStatus(`已定位到：${name}`, 2000)
+        });
+    }
+
+    searchBtn.addEventListener('click', doSearch);
+    searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+    document.addEventListener('click', e => {
+        const panel = document.getElementById('searchPanel');
+        const list = document.getElementById('resultList');
+        if (!panel.contains(e.target) && !list.contains(e.target)) hideResultList();
+    });
+
+    // ============================================================
+    // 7. 标记模式
+    // ============================================================
+    const markBtn = document.getElementById('markBtn');
+    let markMode = false;
+    let userMarkers = [];
+
+    markBtn.addEventListener('click', () => {
+        // 关闭剖面图模式
+        if (!markMode && profileMode) toggleProfileMode();
+
+        markMode = !markMode;
+        markBtn.textContent = markMode ? '标记模式：开' : '标记模式：关';
+        markBtn.classList.toggle('active', markMode);
+        viewer.scene.canvas.style.cursor = markMode ? 'crosshair' : 'default';
+
+        if (markMode) {
+            showStatus('标记模式已开启，点击地球放置标记', 3000);
+        } else {
+            userMarkers.forEach(m => viewer.entities.remove(m));
+            userMarkers = [];
+            showStatus('标记模式已关闭，所有标记已清除', 3000);
+        }
+    });
+
+    // ============================================================
+    // 8. 剖面图模式
+    // ============================================================
+    const profileBtn = document.getElementById('profileBtn');
+    const profilePanel = document.getElementById('profilePanel');
+    const profileCanvas = document.getElementById('profileCanvas');
+    const profileTitle = document.getElementById('profileTitle');
+    const profileClearBtn = document.getElementById('profileClearBtn');
+    const profileCloseBtn = document.getElementById('profileCloseBtn');
+
+    let profileMode = false;
+    let profilePoints = [];       // 存放起点、终点经纬度
+    let profileEntities = [];     // 存放线条、端点等实体
+    let profileRubberLine = null; // 鼠标移动时的预览线
+
+    function toggleProfileMode() {
+        // 关闭标记模式
+        if (!profileMode && markMode) markBtn.click();
+
+        profileMode = !profileMode;
+        profileBtn.textContent = profileMode ? '剖面图模式：开' : '剖面图模式：关';
+        profileBtn.classList.toggle('active', profileMode);
+        viewer.scene.canvas.style.cursor = profileMode ? 'crosshair' : 'default';
+
+        if (profileMode) {
+            profilePoints = [];
+            showStatus('剖面图模式已开启，点击地图选择起点', 3000);
+        } else {
+            clearProfile();
+            showStatus('剖面图模式已关闭', 2000);
+        }
+    }
+
+    function clearProfile() {
+        profilePoints = [];
+        profileEntities.forEach(e => viewer.entities.remove(e));
+        profileEntities = [];
+        if (profileRubberLine) {
+            viewer.entities.remove(profileRubberLine);
+            profileRubberLine = null;
+        }
+        profilePanel.classList.remove('visible');
+    }
+
+    profileBtn.addEventListener('click', toggleProfileMode);
+    profileClearBtn.addEventListener('click', () => {
+        clearProfile();
+        if (profileMode) showStatus('已清除，请点击地图选择起点', 2000);
+    });
+    profileCloseBtn.addEventListener('click', () => {
+        clearProfile();
+        if (profileMode) toggleProfileMode();
+    });
+
+    // ---------- 剖面图绘制核心 ----------
+    function drawProfile(lon1, lat1, lon2, lat2, positions) {
+        profilePanel.classList.add('visible');
+
+        // 适配 canvas 分辨率
+        const dpr = window.devicePixelRatio || 1;
+        const cssW = profileCanvas.clientWidth;
+        const cssH = profileCanvas.clientHeight;
+        profileCanvas.width = cssW * dpr;
+        profileCanvas.height = cssH * dpr;
+
+        const ctx = profileCanvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        const W = cssW, H = cssH;
+        ctx.clearRect(0, 0, W, H);
+
+        // 距离计算
+        const geodesic = new Cesium.EllipsoidGeodesic(
+            Cesium.Cartographic.fromDegrees(lon1, lat1),
+            Cesium.Cartographic.fromDegrees(lon2, lat2)
+        );
+        const totalDistKm = geodesic.surfaceDistance / 1000;
+
+        // 海拔范围
+        const heights = positions.map(p => p.height);
+        const minH = Math.min(...heights);
+        const maxH = Math.max(...heights);
+        const rangeH = Math.max(maxH - minH, 1);
+
+        const padding = { top: 36, right: 30, bottom: 30, left: 60 };
+        const plotW = W - padding.left - padding.right;
+        const plotH = H - padding.top - padding.bottom;
+
+        const xOf = i => padding.left + (i / (positions.length - 1)) * plotW;
+        const yOf = h => padding.top + plotH - ((h - minH) / rangeH) * plotH;
+
+        // 背景网格
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 5; i++) {
+            const y = padding.top + (plotH * i / 5);
+            ctx.beginPath(); ctx.moveTo(padding.left, y); ctx.lineTo(padding.left + plotW, y); ctx.stroke();
+        }
+
+        // 填充区域（渐变）
+        ctx.beginPath();
+        ctx.moveTo(xOf(0), yOf(positions[0].height));
+        for (let i = 1; i < positions.length; i++) {
+            ctx.lineTo(xOf(i), yOf(positions[i].height));
+        }
+        ctx.lineTo(xOf(positions.length - 1), padding.top + plotH);
+        ctx.lineTo(xOf(0), padding.top + plotH);
+        ctx.closePath();
+        const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + plotH);
+        gradient.addColorStop(0, 'rgba(79, 195, 247, 0.75)');
+        gradient.addColorStop(1, 'rgba(79, 195, 247, 0.1)');
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        // 轮廓线
+        ctx.beginPath();
+        ctx.moveTo(xOf(0), yOf(positions[0].height));
+        for (let i = 1; i < positions.length; i++) {
+            ctx.lineTo(xOf(i), yOf(positions[i].height));
+        }
+        ctx.strokeStyle = '#4fc3f7';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Y 轴刻度
+        ctx.fillStyle = '#aaa';
+        ctx.font = '11px "Microsoft YaHei"';
+        ctx.textAlign = 'right';
+        for (let i = 0; i <= 5; i++) {
+            const h = minH + (rangeH * i / 5);
+            const y = yOf(h);
+            ctx.fillText(h.toFixed(0) + 'm', padding.left - 8, y + 4);
+        }
+
+        // X 轴刻度
+        ctx.textAlign = 'center';
+        for (let i = 0; i <= 5; i++) {
+            const d = totalDistKm * i / 5;
+            const x = padding.left + (plotW * i / 5);
+            ctx.fillText(d.toFixed(1) + 'km', x, padding.top + plotH + 18);
+        }
+
+        // 起点终点标记
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'left';
+        ctx.fillText('起点', xOf(0), padding.top - 10);
+        ctx.textAlign = 'right';
+        ctx.fillText('终点', xOf(positions.length - 1), padding.top - 10);
+
+        // 顶部统计信息
+        ctx.fillStyle = '#4fc3f7';
+        ctx.font = 'bold 13px "Microsoft YaHei"';
+        ctx.textAlign = 'left';
+        ctx.fillText(
+            `水平距离：${totalDistKm.toFixed(2)} km　|　海拔：${minH.toFixed(0)} ~ ${maxH.toFixed(0)} m　|　相对高差：${(maxH - minH).toFixed(0)} m`,
+            padding.left, 22
+        );
+
+        profileTitle.textContent = `地形剖面图  ${lat1.toFixed(2)}°N ${lon1.toFixed(2)}°E  →  ${lat2.toFixed(2)}°N ${lon2.toFixed(2)}°E`;
+    }
+
+    // ---------- 采样并绘制 ----------
+    async function sampleAndDrawProfile(lon1, lat1, lon2, lat2) {
+        showStatus('正在采样地形，请稍候...', 0);
+
+        // 采样点数量：教学精度，100 个足够
+        const SAMPLE_COUNT = 100;
+        const cartographics = [];
+        for (let i = 0; i < SAMPLE_COUNT; i++) {
+            const t = i / (SAMPLE_COUNT - 1);
+            const lon = lon1 + (lon2 - lon1) * t;
+            const lat = lat1 + (lat2 - lat1) * t;
+            cartographics.push(Cesium.Cartographic.fromDegrees(lon, lat));
+        }
+
+        try {
+            let sampled;
+            if (globalTerrainProvider) {
+                sampled = await Cesium.sampleTerrainMostDetailed(
+                    globalTerrainProvider,
+                    cartographics
+                );
+            } else {
+                // 无地形时，使用 0 高度（平地剖面）
+                sampled = cartographics.map(c => {
+                    c.height = 0;
+                    return c;
+                });
+                showStatus('提示：地形服务未加载，剖面图为平地', 4000);
+            }
+            drawProfile(lon1, lat1, lon2, lat2, sampled);
+            if (globalTerrainProvider) showStatus('剖面图已生成', 2000);
+        } catch (err) {
+            console.error('地形采样失败：', err);
+            showStatus('地形采样失败，请检查 Cesium ion Token', 4000);
+        }
+    }
+
+    // ============================================================
+    // 9. 点击地图：标记 / 剖面 / 信息
+    // ============================================================
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+    handler.setInputAction(async function (click) {
+        const ray = viewer.camera.getPickRay(click.position);
+        if (!ray) return;
+
+        const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+        if (!cartesian) {
+            showStatus('未拾取到地表位置，请点击地球表面', 3000);
+            return;
+        }
+
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        const lon = Cesium.Math.toDegrees(cartographic.longitude);
+        const lat = Cesium.Math.toDegrees(cartographic.latitude);
+
+        // ---------- 剖面图模式 ----------
+        if (profileMode) {
+            profilePoints.push({ lon, lat });
+
+            // 添加端点小球
+            const pointEntity = viewer.entities.add({
+                position: Cesium.Cartesian3.fromDegrees(lon, lat),
+                point: {
+                    pixelSize: 10,
+                    color: profilePoints.length === 1 ? Cesium.Color.LIME : Cesium.Color.ORANGE,
+                    outlineColor: Cesium.Color.WHITE,
+                    outlineWidth: 2,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY
+                }
+            });
+            profileEntities.push(pointEntity);
+
+            if (profilePoints.length === 1) {
+                showStatus('起点已选，请点击终点位置', 3000);
+                return;
+            }
+
+            // 已选够两个点，绘制连线并采样
+            const p1 = profilePoints[0];
+            const p2 = profilePoints[1];
+
+            const lineEntity = viewer.entities.add({
+                polyline: {
+                    positions: Cesium.Cartesian3.fromDegreesArray([p1.lon, p1.lat, p2.lon, p2.lat]),
+                    width: 3,
+                    material: Cesium.Color.YELLOW,
+                    arcType: Cesium.ArcType.GEODESIC,
+                    clampToGround: true
+                }
+            });
+            profileEntities.push(lineEntity);
+
+            // 清除预览线
+            if (profileRubberLine) {
+                viewer.entities.remove(profileRubberLine);
+                profileRubberLine = null;
+            }
+
+            await sampleAndDrawProfile(p1.lon, p1.lat, p2.lon, p2.lat);
+            profilePoints = []; // 重置，可再次选择
+            return;
+        }
+
+        // ---------- 标记模式 ----------
+        if (markMode) {
+            const idx = userMarkers.length + 1;
+            const marker = viewer.entities.add({
+                position: Cesium.Cartesian3.fromDegrees(lon, lat),
+                point: {
+                    pixelSize: 14, color: Cesium.Color.ORANGE,
+                    outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY
+                },
+                label: {
+                    text: `标记 ${idx}`,
+                    font: 'bold 14px "Microsoft YaHei", sans-serif',
+                    fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                    pixelOffset: new Cesium.Cartesian2(0, -24),
+                    eyeOffset: new Cesium.Cartesian3(0, 0, -50000)
+                }
+            });
+            userMarkers.push(marker);
+            showStatus(`标记 ${idx}：经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°`, 3000);
+            return;
+        }
+
+        // ---------- 普通信息模式 ----------
+        showStatus(`经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　正在获取海拔...`, 0);
+        if (globalTerrainProvider) {
+            try {
+                const sampled = await Cesium.sampleTerrainMostDetailed(
+                    globalTerrainProvider,
+                    [Cesium.Cartographic.fromDegrees(lon, lat)]
+                );
+                showStatus(`经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　海拔 ${sampled[0].height.toFixed(1)} 米`, 4000);
+                return;
+            } catch (err) { console.warn('地形采样失败：', err); }
+        }
+        showStatus(`经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　海拔 ${cartographic.height.toFixed(1)} 米（近似）`, 4000);
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    // 鼠标移动时显示剖面图预览线
+    handler.setInputAction(function (movement) {
+        if (!profileMode || profilePoints.length !== 1) return;
+
+        const ray = viewer.camera.getPickRay(movement.endPosition);
+        if (!ray) return;
+        const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+        if (!cartesian) return;
+
+        const c = Cesium.Cartographic.fromCartesian(cartesian);
+        const lon = Cesium.Math.toDegrees(c.longitude);
+        const lat = Cesium.Math.toDegrees(c.latitude);
+        const p1 = profilePoints[0];
+
+        if (profileRubberLine) viewer.entities.remove(profileRubberLine);
+        profileRubberLine = viewer.entities.add({
+            polyline: {
+                positions: Cesium.Cartesian3.fromDegreesArray([p1.lon, p1.lat, lon, lat]),
+                width: 2,
+                material: new Cesium.PolylineDashMaterialProperty({
+                    color: Cesium.Color.YELLOW.withAlpha(0.7),
+                    dashLength: 12
+                }),
+                arcType: Cesium.ArcType.GEODESIC,
+                clampToGround: true
+            }
+        });
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+
+    // ============================================================
+    // 10. 三江源地区图层
+    // 范围：玉树州、果洛州全部，海南州兴海县、同德县，黄南州泽库县、
+    //       河南县，以及格尔木市唐古拉山镇（约 36.3 万 km²，
+    //       89°45′E–102°23′E，31°39′N–36°12′N），与教材图10.15一致。
+    // 数据：县级行政区划边界合并简化而成，已转为 WGS84 坐标。
+    // ============================================================
+    const SJY_GEOJSON = {"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"三江源地区"},"geometry":{"type":"Polygon","coordinates":[[[96.94652121799831,32.02487329017225],[96.95910089638411,32.02221327116973],[96.9659303215533,32.01190171801158],[96.95510322451017,31.99650913120848],[96.94235494678996,31.989111140907344],[96.89428602011125,32.01634686874125],[96.8890217103065,32.005427925295876],[96.87614678500809,31.99866526114042],[96.86293051507909,31.998170051274904],[96.87020866997794,31.970255567431067],[96.86636078890685,31.966849871693256],[96.84711420411155,31.981286711219695],[96.84929008751308,31.989528520155908],[96.84016659975472,32.00019207719188],[96.79655428533145,32.0206563232031],[96.78291746942428,32.01345621032898],[96.74680560714594,32.016022333512836],[96.73244378820908,32.029146237010835],[96.72076014555883,32.02034709554162],[96.74271402619026,32.00314193383936],[96.73979172035256,31.97890882536092],[96.7499809897229,31.96472727655332],[96.754827460528,31.945754986040598],[96.7744713612161,31.939536088241002],[96.78459116296979,31.915200784291592],[96.80936213462321,31.900569654848717],[96.79404655649138,31.871584236037336],[96.76619499823165,31.869780411661026],[96.76059426158693,31.865317621808742],[96.76176511733613,31.84176903339046],[96.76577751893078,31.821285925509503],[96.7967250466407,31.798095182981193],[96.80224891092298,31.77477785599132],[96.81070272203588,31.76955941339115],[96.81790224842237,31.74873626946651],[96.83347304470954,31.741611403651504],[96.83916558067415,31.732113686302036],[96.83698946778064,31.717941956371803],[96.82167056338828,31.702687628466123],[96.80158079590875,31.705582426185302],[96.79020033923197,31.70076090861435],[96.77480986614137,31.676242259674883],[96.73487047395636,31.681568644315405],[96.72243331141819,31.68936110784411],[96.69590890760612,31.721965048819637],[96.67323300426469,31.730315725959763],[96.66806443002247,31.72662717258777],[96.67039948133815,31.714328251847625],[96.66097904970655,31.70814948841874],[96.63212608384488,31.72058931336818],[96.61551819512903,31.739527026359006],[96.5808438940724,31.72315263654865],[96.57247832651747,31.714162801360853],[96.56503068218508,31.71569046079669],[96.52666136678319,31.74096570725577],[96.5236438007648,31.74767939832767],[96.48473293297221,31.76859333839884],[96.47005990091851,31.77157691542513],[96.43277756159335,31.801833051959214],[96.42817329450966,31.826249892454026],[96.41436799800532,31.8360248625396],[96.4072602022142,31.84791849889048],[96.40767718224213,31.865904522122413],[96.39864906676337,31.879762087744464],[96.39956807372619,31.89591972435206],[96.38319401912611,31.926317203174012],[96.36799978887336,31.926669058680957],[96.35131156429836,31.918354188329378],[96.28807831320827,31.92210877792892],[96.25065790898498,31.93196059654202],[96.21820042380175,31.907739259935976],[96.18846962558965,31.905106805419244],[96.19919194293638,31.886187397718285],[96.21393109967404,31.878776540500944],[96.21368074964154,31.868081818978858],[96.20204097151402,31.84307728205619],[96.1825219194292,31.838056060613617],[96.17489789444869,31.826479549066637],[96.18101431525739,31.79698127489779],[96.17556866573945,31.783388752874604],[96.17732792751046,31.777824096060602],[96.20622956831976,31.768032460378368],[96.22966938139581,31.752983772694925],[96.22180229438581,31.73842801990402],[96.25250096467835,31.695935702615408],[96.24698366688992,31.680370481000757],[96.24815483792429,31.662735324509487],[96.22238981308543,31.655321712046902],[96.22465032879302,31.62720577272689],[96.2121778799981,31.616760063424948],[96.21669856342018,31.611092490322697],[96.20564611703816,31.60093318471091],[96.1929152764061,31.607933028334898],[96.15973558204796,31.603256187674912],[96.15227918494793,31.611512849319272],[96.14767106909336,31.633330346827],[96.15227835878478,31.654534040135793],[96.14632931019814,31.69224268041114],[96.13493809300564,31.70423559263712],[96.12380169142942,31.69975463880417],[96.10773495388476,31.701567842012576],[96.10614572300457,31.712423350748328],[96.06403183598813,31.72272490022267],[96.05910770892434,31.73445019018387],[96.0455934271252,31.73423650346389],[95.99175392394551,31.779276716682766],[95.98833790876097,31.789797806339383],[95.99191996446828,31.806680109061336],[95.9822543851409,31.8190402749368],[95.91969383497495,31.82271861629728],[95.89879957730744,31.819655530352748],[95.88918066910854,31.798634590124475],[95.86800475250028,31.77538551529506],[95.85720196356827,31.745077724556374],[95.84555736838573,31.738815621964353],[95.8526795058433,31.71659291098814],[95.84916104343002,31.707509051402024],[95.83659312084312,31.701482047387678],[95.83391244930165,31.688986899665473],[95.82427593991758,31.684452444182728],[95.80115175458087,31.705837301635313],[95.7918536866365,31.73339140321352],[95.77879274995404,31.751429759614897],[95.73530332549939,31.766444125514614],[95.69339481140649,31.771343151070187],[95.68038094195435,31.77871098183802],[95.67512637877859,31.774881319226623],[95.61396159853687,31.785869703279836],[95.60067761513008,31.770179952491592],[95.58069382322226,31.77094255740864],[95.57609248296937,31.749910521704187],[95.56546297329514,31.74332023541966],[95.55415807436623,31.74843962031417],[95.54569650303704,31.742276813359773],[95.51073633957617,31.752940868876028],[95.50000023871713,31.776431633451576],[95.49178131495044,31.778807467654207],[95.47802706194497,31.79849294367874],[95.46922387683271,31.797077629602846],[95.45489184350268,31.805968175811053],[95.46117688134579,31.813948379561126],[95.44056747804648,31.832184889038626],[95.43177668991682,31.847042457579956],[95.4181372974132,31.87441301087911],[95.42098056869173,31.88410057241145],[95.4066810461093,31.896990482157815],[95.40576096757873,31.92182023513743],[95.39214220699016,31.922396653280448],[95.39038748409554,31.930257317926845],[95.36718202424883,31.931380425755663],[95.36017385137916,31.94389728337131],[95.37018483161309,31.94719059270598],[95.3692668004276,31.953755346791205],[95.35983995153491,31.96138614977728],[95.37602663228954,31.98000036784646],[95.37519116259305,31.992263314832567],[95.38621063970034,31.994456657104802],[95.39439483917621,32.00364720315363],[95.41621002098734,32.00350823810414],[95.41963979395939,32.01007046345742],[95.43026618460476,32.00146258441329],[95.45329539538767,32.010122230633456],[95.42005667960238,32.036116317177715],[95.42231523206412,32.053971730015924],[95.43093411116841,32.054651683592695],[95.43419916988229,32.063509372361246],[95.44072938390208,32.06069610129448],[95.45354482244618,32.06478927658243],[95.44851846266549,32.07918211622729],[95.4493549667373,32.11085208400138],[95.444496056967,32.11992955691282],[95.43294115730801,32.12665402479748],[95.44014111535564,32.139958031229014],[95.4364567061004,32.15104428875358],[95.43896897560936,32.15974803685533],[95.42348425083702,32.16183081285399],[95.4066740419397,32.18203810805138],[95.39689734682717,32.18136870259374],[95.38779211165213,32.18834936042248],[95.3640892643731,32.17895833909794],[95.3592509132231,32.1662039769259],[95.36567465423475,32.15343133125183],[95.35249576174759,32.14824018433045],[95.34240561286875,32.157102592739484],[95.32990049644043,32.15124593542454],[95.32248011056555,32.15470184157268],[95.31197506151855,32.15108884469314],[95.30680603083194,32.166442130690804],[95.28453685498152,32.17503192377318],[95.26884789763291,32.19703069795208],[95.27978047677344,32.20327947844713],[95.27677688290315,32.20949368246078],[95.26283670415198,32.214281346769944],[95.25498636718308,32.23807182346929],[95.25548682602324,32.256599992388665],[95.23844122789369,32.28953822573746],[95.24537736014923,32.29598346745733],[95.23969446301678,32.304189753249666],[95.24019525125959,32.32279894677945],[95.21343596826057,32.32387492794642],[95.21352032598166,32.31347451475551],[95.20724473207753,32.311223193164764],[95.20632447164716,32.30010319056413],[95.19067259343919,32.29564008612283],[95.17744507639333,32.2846863144932],[95.13734624469038,32.27616700266677],[95.1309035673754,32.266276206273865],[95.11911030055363,32.26731345901934],[95.10531640696854,32.26109911420797],[95.07825704233169,32.2828736827832],[95.08009269033404,32.300340597651626],[95.09453648118765,32.31584228275479],[95.095539068406,32.32447860782457],[95.1348350028122,32.32617587832997],[95.1491461202422,32.334022413462456],[95.19242920389541,32.334673183900186],[95.2255643374606,32.34726219080628],[95.24512520628788,32.3452207593252],[95.2606627843221,32.35051228235934],[95.2400271937813,32.36672773528757],[95.22798924715781,32.36543322472484],[95.22840738672593,32.37592441100234],[95.2216322858721,32.3828784438062],[95.21744976680608,32.3993204890505],[95.20615512448045,32.3904875811896],[95.19008423510522,32.38936606180261],[95.18464283865325,32.396077149666795],[95.17166491496288,32.39586311087137],[95.16387924859592,32.38688585802736],[95.1516557244398,32.3896296445218],[95.15349708181631,32.40393222607781],[95.12997996825736,32.40117917681987],[95.13039885058379,32.389215217129326],[95.10656676649423,32.386477889887814],[95.08935752629475,32.39029111168525],[95.07324886642415,32.37847880913236],[95.05606846672106,32.396713901940416],[95.0324897544666,32.40515575588071],[95.025911085553,32.41437075497858],[95.01866819115449,32.41057842795974],[94.99244834707102,32.42342934061944],[94.97912906859413,32.41169773279922],[94.96713989558968,32.409634037272575],[94.95614547818349,32.41428399653145],[94.94089653884184,32.40635666513189],[94.93756155616751,32.41103301921295],[94.9216308105509,32.412530328091016],[94.91169835030712,32.418303952633075],[94.90326372243597,32.45418197959514],[94.88914288902464,32.47494337245012],[94.84991220624852,32.46718283865708],[94.84120608011405,32.478453999108396],[94.81173670186344,32.49049349035781],[94.80587723659647,32.488817521558445],[94.79441142425173,32.501366967182726],[94.79349059436845,32.516455681710035],[94.78478831564037,32.526865749746825],[94.7598698399951,32.52922456204137],[94.75686042876038,32.548684961140026],[94.77107129263833,32.55773136266001],[94.74432925153008,32.563003693489414],[94.73656221434132,32.589829636793574],[94.7222891917532,32.59692498707948],[94.71628189067053,32.60653540015111],[94.7026863582226,32.60070684742734],[94.68659476465984,32.6067721914039],[94.68926182765385,32.616987958865224],[94.67700771911764,32.620813403104314],[94.63765695334712,32.648068149880174],[94.61379390914192,32.67617275186423],[94.60043209522586,32.66591780193566],[94.6004323363962,32.6532328175724],[94.5909912139721,32.64320617410966],[94.59608871244744,32.632608809245276],[94.56481375544534,32.63001992328344],[94.55367911080093,32.613317406915876],[94.53449495501496,32.60072439429295],[94.51211293998827,32.59876166927823],[94.5079204627121,32.60621292712928],[94.48469261231702,32.5971587361901],[94.47815281829097,32.60964394929799],[94.46859592610343,32.61056857188102],[94.45786818467221,32.60174679182534],[94.46264495325846,32.59728868624545],[94.46231041302134,32.574794594115716],[94.43299418804546,32.56541442228075],[94.42730281507393,32.573825755942416],[94.40639334345049,32.58555767763462],[94.40363460504965,32.60096344267352],[94.39185297306503,32.60571963624015],[94.3939419633975,32.59644785938003],[94.37573849194689,32.564454488607055],[94.38216701956593,32.55174701302284],[94.3701478806468,32.52711184199609],[94.35554735129554,32.52327728543718],[94.35229320733616,32.535179953585825],[94.32018774445405,32.52900576444207],[94.31635171065423,32.53415185064827],[94.29308082321354,32.52219933357341],[94.29224629495116,32.50625577608299],[94.24364220355552,32.51942692161185],[94.22817184191295,32.51237508464118],[94.19560994153355,32.518569431404735],[94.18103623529973,32.50150321663957],[94.17651354169155,32.48549860304505],[94.18673279761319,32.47251828260195],[94.17952923287136,32.45826511011809],[94.15180243869393,32.45683215027328],[94.1468614077625,32.4431523010483],[94.13631104951254,32.436180650479756],[94.1009173363939,32.450013098912876],[94.08955013355111,32.46625592858408],[94.06925741626166,32.468367548401204],[94.06583584127425,32.472467453687784],[94.05140303518245,32.472967674586506],[94.03923139502791,32.461755811287276],[94.028064185857,32.461926241245074],[94.03056387227554,32.451536860175736],[94.00990353630675,32.44859389732058],[93.99724409085405,32.45835012121468],[93.99507759370583,32.46573875594648],[93.97417074118077,32.46294275667758],[93.97067111676246,32.47423884434925],[93.95883777464904,32.48750719231042],[93.92797800578282,32.479278468624486],[93.91253077280537,32.471102228628645],[93.91219695487273,32.46467228691277],[93.89698774303044,32.47529546128345],[93.86754070841725,32.4765595258844],[93.85757919820568,32.4673069952363],[93.85464836583286,32.47673110409544],[93.85858295215658,32.48892723537865],[93.8496230645751,32.4981013977972],[93.84928792155912,32.513475927334746],[93.82658858223154,32.52352464539693],[93.82859866992476,32.53209454319948],[93.82147860377025,32.5500669176278],[93.79149773751938,32.561005319197115],[93.77936136233457,32.559515511342425],[93.76162748803898,32.571060532010456],[93.75034136755337,32.565492128418704],[93.74039855066167,32.57614756873825],[93.72069137293929,32.58058380676183],[93.69691314425819,32.57833393999888],[93.67739993214464,32.570569286338674],[93.66864552161724,32.57800494533829],[93.65347090276866,32.57575104408491],[93.63745968789759,32.55418246020574],[93.62461132199907,32.553770373538065],[93.6292837578759,32.54463110008366],[93.61927048999463,32.52660722702087],[93.562771600927,32.50269962043578],[93.56268761440114,32.495081861434684],[93.55381469832928,32.4885921380203],[93.53312402856602,32.48892748068768],[93.5310299309442,32.477780903687986],[93.51510414114703,32.478451057774386],[93.50034823621233,32.50587878585835],[93.4868513535399,32.501268428222666],[93.4757020707703,32.50632949866545],[93.47394183367174,32.53055063374863],[93.4642208961133,32.54289609270788],[93.46145561050074,32.55835134713435],[93.44545848956713,32.56430963801498],[93.43424235462568,32.559628791929526],[93.41065881441473,32.56012993570823],[93.40781835688729,32.546998214941496],[93.39487027310952,32.544523515323164],[93.38401894853432,32.527446697576885],[93.3749229973559,32.5331653576788],[93.37400513560787,32.54058860351513],[93.36332975955794,32.551926050201466],[93.33698784988749,32.57351855737635],[93.30706946393221,32.582801206418445],[93.31240327250595,32.592586625946105],[93.31198598836608,32.605330370164054],[93.30273501598148,32.60905455144725],[93.30156742809835,32.620275747204005],[93.28672758015865,32.62248446485992],[93.28314204462059,32.62733735285599],[93.26144979039734,32.62764121706008],[93.24792403364495,32.64741424969005],[93.25168217756516,32.65763009604324],[93.23781592573887,32.66446952926801],[93.22678453781761,32.65700392061761],[93.20914208351321,32.657697705214346],[93.17399775774523,32.672793739604074],[93.16311750780245,32.6671196437133],[93.15826456348404,32.64710853123201],[93.12965104252159,32.6444502439081],[93.11577264622072,32.649663122633434],[93.1059957351563,32.63948821276523],[93.08679046939798,32.63896586249605],[93.07561039421599,32.62956311953122],[93.06418726802886,32.62943495470761],[93.05551870335312,32.65344721914838],[93.04735465505878,32.65626619142865],[93.04727052411798,32.672370922750424],[93.04027443409548,32.6766618393808],[93.04618723500533,32.696216108840794],[93.02245952694349,32.70539382831302],[93.02545499223663,32.71265017975696],[93.01971241855027,32.73682891611634],[93.00698113850818,32.74431888759368],[92.98384980978436,32.73143119874333],[92.98226925521668,32.72436222112791],[92.96345915608623,32.71710353294853],[92.93738693343927,32.72261796132144],[92.92946858869351,32.71308689904117],[92.91795913788488,32.71447510693801],[92.91295257604699,32.70716673582989],[92.89909484853344,32.7153842215437],[92.88773305276689,32.71048989473196],[92.87820516538407,32.71337959278179],[92.87611604617827,32.699559848316476],[92.86583072291236,32.70073548737319],[92.85428676193108,32.71306407357262],[92.82173220387023,32.732231456504955],[92.80951289460357,32.73325366428994],[92.78834630688644,32.72249255271365],[92.77555082504453,32.726607951698114],[92.75532666575182,32.74553472727918],[92.74446926122316,32.74411020657481],[92.73336603147611,32.75332198165794],[92.72210237530012,32.75233446192623],[92.68700144410472,32.768471639092056],[92.66691838979908,32.73438875698071],[92.64866568394942,32.724073278645115],[92.63374255928272,32.723574883866966],[92.6236500477434,32.73512179129988],[92.61246864904612,32.730669635765636],[92.60495537506631,32.733189226600075],[92.5992766093998,32.74619617990199],[92.59083921149518,32.73978768482689],[92.57729783591287,32.743672075177756],[92.57027224725782,32.73592863321023],[92.56006443256364,32.73439507933295],[92.52369833918428,32.736592378255445],[92.50522051693164,32.74719781370214],[92.48482062999315,32.74680030107204],[92.45796738240507,32.76595195042999],[92.43406127150656,32.76374825730252],[92.40968004115821,32.750032707731215],[92.3546722089078,32.76686823809983],[92.35648053937318,32.75040773035655],[92.33518717487115,32.741067924447776],[92.32966305136317,32.74971317949113],[92.30003303875311,32.75165655891025],[92.289884693037,32.731635908706714],[92.25428557838558,32.723164098515426],[92.23303975984666,32.740837733415084],[92.21933627444734,32.7363737380396],[92.19755521421155,32.75712111110412],[92.21036206270894,32.79079120828672],[92.19271272362019,32.80438199169015],[92.22638908819368,32.823299220027685],[92.22961284608029,32.84257447630772],[92.20380616261875,32.860130357731414],[92.2041086460467,32.86848374790179],[92.1522526462584,32.87580132835068],[92.14751158890473,32.886231782676134],[92.11595076859719,32.878177503277655],[92.10073985980259,32.862542776096234],[92.03850456508229,32.8636951427169],[92.01722720223736,32.831951108374085],[91.99756301379277,32.837737814849824],[91.98943684866022,32.82677781907553],[91.95671850628429,32.82208215911289],[91.94064715803877,32.838154923765124],[91.92144627849422,32.87200062596283],[91.89286059602146,32.88844181325345],[91.89598295581692,32.909787231341376],[91.85899078484937,32.90470512449341],[91.83850974038813,32.950375219553514],[91.81055905011021,32.95705206651815],[91.79804971775613,32.9443134172893],[91.77949442401483,32.948392910024516],[91.74997371019188,32.971926426319776],[91.72682814022335,32.976510646573175],[91.72270427395875,32.986604567484136],[91.68200239555121,32.992382656963066],[91.66361961663114,33.00210215943953],[91.66331788607157,33.015418714698264],[91.57954447762496,33.04184544451915],[91.55262410595411,33.069701343706804],[91.55887807967662,33.07851536037745],[91.5343559354719,33.102314737632526],[91.51102722865443,33.100907689879136],[91.49506727289304,33.1112720557427],[91.46042898937222,33.093978548906264],[91.45719861844125,33.07609913526022],[91.43429885288475,33.06819252386175],[91.42532709495474,33.081082112012815],[91.40316939961166,33.082614715789155],[91.37229013124035,33.10171122443106],[91.31012008956579,33.110079922542134],[91.28490744143618,33.131208405953515],[91.26168538457904,33.142443950682484],[91.22393985232046,33.14330894800203],[91.21456965876845,33.129332768144],[91.19430816289221,33.12775867194498],[91.18644361001458,33.10846926409715],[91.16072643752224,33.11144353435054],[91.145400843076,33.07426506533443],[91.13138863541614,33.07646180535401],[91.06879038784832,33.11555434373033],[91.03606026263687,33.10077174590108],[91.01038453122192,33.12361245339318],[90.95151281551611,33.118069440937944],[90.92640539795744,33.12261167862417],[90.91032098585417,33.112549437040535],[90.90106603769564,33.085479095529585],[90.88163417867293,33.12282011172999],[90.84212190240966,33.11309479654164],[90.80228385432596,33.11664882677126],[90.73882262477544,33.144404109425786],[90.7041386663891,33.13792543778762],[90.63101145767263,33.17685572602965],[90.59470033698611,33.209293465441625],[90.56295930387573,33.223424490321534],[90.5423762517201,33.24069276217053],[90.51763379723623,33.24539092038582],[90.47934060450477,33.2678109930462],[90.40528379529954,33.26238665525658],[90.38615536251409,33.27901928926281],[90.36563600757876,33.283396792706164],[90.33136399786508,33.31268095456728],[90.24477387897906,33.42604712730195],[90.21826541763588,33.43975332591303],[90.18617935863692,33.44291868175787],[90.10565976159991,33.462943393152685],[90.08984400292772,33.471574361046464],[90.08138593365557,33.52689290441156],[90.07142449209228,33.5354612221655],[90.01967744112835,33.549475139356666],[89.98625278290938,33.58560153165243],[89.98213748732753,33.614076633719755],[89.99909803137602,33.66111028817879],[89.99086748846486,33.670082598619985],[90.00652468955137,33.68986126098988],[89.9795245261021,33.70569411949926],[89.9819329131497,33.7277751937488],[89.93773873448885,33.743225485553964],[89.9055425280113,33.743123718797904],[89.9005070205487,33.76053414089917],[89.9172189272558,33.774666096648225],[89.93180538936933,33.79905448325085],[89.92396009474008,33.81126360407062],[89.89808831679684,33.80974282031186],[89.89174017665799,33.82413937120015],[89.86935759898233,33.83265314378112],[89.86057997893367,33.855031109950794],[89.83534832634595,33.870977715559725],[89.79285383649363,33.86737142470616],[89.76179366110448,33.90037626950063],[89.7635069880277,33.90876655888846],[89.72976949998716,33.92361677586968],[89.70623167551379,33.957520535236554],[89.68592859459227,33.9616800862023],[89.68281211698495,33.99282267760723],[89.64935113005363,34.03857105944],[89.63286745538792,34.05136048663665],[89.6543753305728,34.060564269199276],[89.65407263876267,34.09883993330019],[89.67889046120592,34.10762775744852],[89.69145006400356,34.12819463898895],[89.70984623658366,34.13367768353811],[89.75463244558323,34.12654554592491],[89.75825905441346,34.154302158072696],[89.78346387135389,34.15179941558566],[89.81494737767645,34.171365477611765],[89.80263257778577,34.1911198664033],[89.82443539746377,34.20250552396659],[89.82029655698528,34.22730752629274],[89.83604341896843,34.266126769552486],[89.82715826113785,34.30030942400329],[89.86308975527443,34.32481763895987],[89.86974671197176,34.34337143331642],[89.85481430641362,34.36142819301786],[89.83916960693679,34.358157218768035],[89.8186772628347,34.37162535926406],[89.82190706702893,34.386259782188496],[89.79747974138147,34.39799761798064],[89.81766559274672,34.422447925877854],[89.82129907629677,34.45717889857424],[89.80605625133128,34.47645708500657],[89.81635155333348,34.487647166150886],[89.80968835734221,34.50594177418996],[89.81221075937621,34.551661508588865],[89.77578596823479,34.57603970365336],[89.77558294850381,34.59551309992849],[89.79283176148549,34.60642458542175],[89.79666549232611,34.63038145144685],[89.78012022769727,34.64467389254809],[89.77225497580578,34.63800376361744],[89.73961030345262,34.64808683457367],[89.72391030769131,34.664715900657676],[89.73568385067203,34.68125800515438],[89.72129382166116,34.70552624647228],[89.73417242065211,34.71540223342826],[89.73034740782083,34.7337221115181],[89.76076034707724,34.741426578664566],[89.76579888459088,34.749927141997695],[89.79535037163313,34.74534969353691],[89.80655255409059,34.75063686089057],[89.80554293550368,34.77026180461634],[89.82795162518553,34.789199793590754],[89.82381310194684,34.798342773408365],[89.86580013322481,34.81210450714653],[89.84965436024042,34.822873437240155],[89.84430419578989,34.85878676171133],[89.813110084498,34.86977863706389],[89.82098363053866,34.880512717779204],[89.81462292026718,34.899634461205025],[89.82509598508658,34.901394938049506],[89.80034416635695,34.91856420165032],[89.7854331069753,34.92302755039895],[89.7629150249939,34.91727289850704],[89.74476613715828,34.90482954899713],[89.73130994970649,34.90742493538227],[89.70959586559503,34.92182805706009],[89.69858008800215,34.909543607861366],[89.66954774706875,34.89609179317303],[89.66804632257677,34.88901726840595],[89.65670184461163,34.89000970816855],[89.65236441940603,34.88460542702038],[89.61906483992946,34.88303402229435],[89.62232076881784,34.89385514078063],[89.57701878433213,34.896684423521144],[89.58228922187779,34.909267597854175],[89.56588580563216,34.919333057348815],[89.55910135793368,34.932454938856765],[89.56094350509574,34.946464555289126],[89.56822881555782,34.95197550910033],[89.56429283889867,34.965004162713974],[89.57467265293823,35.00091581992489],[89.56554718162441,35.01296129467807],[89.57952490487185,35.02087292018932],[89.58412594877053,35.02946530914173],[89.58621697244871,35.04493433976482],[89.57801750954695,35.05637895086544],[89.58864214038744,35.05924657993662],[89.59215246595184,35.08860047787893],[89.58429106501201,35.09791887956818],[89.59098194913788,35.10548805721839],[89.5809440046611,35.11784654757981],[89.53856610063505,35.12211756870072],[89.53638642691621,35.127647506890426],[89.51718209280692,35.13511484379059],[89.50216587067025,35.16670265251503],[89.47892818432788,35.19350728470119],[89.47288928139506,35.209020567129464],[89.4479912539602,35.22476423522219],[89.45620305941893,35.23933870563235],[89.48328729735536,35.25755785190049],[89.51264854325862,35.26667104555469],[89.52959021347743,35.27735457972673],[89.52556477120262,35.28774913466879],[89.50895687775326,35.28521657187104],[89.494862436435,35.29120495476583],[89.49234576801732,35.29939179168512],[89.51407210067397,35.33300752093139],[89.51012855148043,35.34873114696904],[89.4968735783506,35.35527004813464],[89.49486000539406,35.362118107759606],[89.50501068214653,35.37332585756703],[89.53235432903065,35.36976912749326],[89.56595454798534,35.384459478053515],[89.5790119859313,35.382955109502525],[89.59732671022827,35.392894806943694],[89.6154571017914,35.411783108276175],[89.6563516566605,35.42643510313442],[89.68429577695551,35.41553373562928],[89.69981505562504,35.42966490396237],[89.69681032170017,35.436564409116954],[89.70874492479027,35.439993802598615],[89.71216698243504,35.44835297772615],[89.72285534113566,35.45312065971606],[89.72953796293193,35.463821309780116],[89.72627907869011,35.46823454410994],[89.73672289649011,35.46933122081483],[89.7419048181712,35.480447481928046],[89.76306418922455,35.48325283370607],[89.73889543880415,35.508007283481724],[89.71792670016355,35.50246536991404],[89.70306701880226,35.50813391184975],[89.70774027438885,35.51721908707039],[89.70189763732057,35.5266414308557],[89.7040681076417,35.535774285233366],[89.69780884189386,35.53817147161546],[89.69855962294241,35.54872863605479],[89.70707090181794,35.57749350682724],[89.71700549135761,35.58459285377788],[89.74733628578296,35.58113385667425],[89.76214037739783,35.58801950892234],[89.7636463061101,35.600408383529974],[89.74014525599057,35.62242334234747],[89.73111912635719,35.64333993256977],[89.72309980796099,35.65045368118204],[89.74666405009197,35.663371717592334],[89.74816836168141,35.691698737082376],[89.74064391508513,35.70109475758821],[89.74749940595065,35.70356761006065],[89.74841892089972,35.71172416150893],[89.73855346926486,35.71607914280589],[89.75034101009147,35.73234088412352],[89.74465453548991,35.755242303927105],[89.76163279719474,35.76632737483815],[89.77016833685975,35.76161663946766],[89.77786992206168,35.763958944704946],[89.77946098733352,35.77842953702534],[89.76548079478201,35.79956717328831],[89.7793758295004,35.808275508180905],[89.7845671750544,35.83422861983279],[89.79981268012142,35.84834152644279],[89.78984275889853,35.858436633047965],[89.77661100999562,35.862079611262544],[89.74657466593602,35.85488289758298],[89.73896690557761,35.85927625164051],[89.70539251210766,35.84983820298307],[89.66935072013978,35.85223496066907],[89.6581734250636,35.84882519295463],[89.60508489278338,35.86183878212761],[89.59012187344533,35.85616875091851],[89.57573364107968,35.86224404009057],[89.54776223551364,35.85808596589998],[89.54172763583135,35.86799837678939],[89.52839625594386,35.87089318541445],[89.52881569963942,35.874781235261906],[89.5506102939373,35.87391626744385],[89.55228596069462,35.88045970071303],[89.48754295569468,35.90401755015228],[89.47034802104146,35.90095150641507],[89.42535506726728,35.91777547111068],[89.41882805345315,35.932851411557586],[89.43154805177322,35.94671159592579],[89.42418110813641,35.96794669641679],[89.42443189754435,35.98484733289757],[89.43204933629012,35.99385404695651],[89.40184892893696,36.01743711604647],[89.40828535119464,36.035058034072335],[89.41648054664402,36.04629036943453],[89.4291173685849,36.04397578765988],[89.43782516432884,36.03207610072528],[89.44896762256862,36.02812579562397],[89.45969493673921,36.03061449824388],[89.47311111371806,36.02256994822616],[89.48460252454413,36.0277605532667],[89.54851093731729,36.02930368499321],[89.5603235476949,36.0361712700556],[89.60307385712336,36.03893580555564],[89.62153331686358,36.05069756899752],[89.63580720830615,36.050725475011745],[89.64114775236976,36.057698861191554],[89.63939560131644,36.06650686552241],[89.65733255984657,36.07030906807889],[89.68594236252689,36.09146569195441],[89.72533970203898,36.08899394570624],[89.72876546640556,36.08397327191397],[89.75074787236277,36.08040797111016],[89.76212441840686,36.07320390698061],[89.76622486392228,36.078589250864134],[89.79251700962045,36.07172918918233],[89.81019567006271,36.08010641038566],[89.84581685576327,36.076659332636794],[89.8572956568401,36.082288783719385],[89.88551611169429,36.07766629414968],[89.90057428283949,36.08008909576929],[89.90642707878027,36.0753890728889],[89.91127439175813,36.0800401821662],[89.93958554250649,36.06814626127411],[89.94534314311392,36.07078203263926],[89.94142071972468,36.090814438767694],[89.94634290691009,36.098376496376616],[89.9354110252152,36.13072451081375],[89.94250390246614,36.14096818131958],[89.9911054239881,36.164039900983795],[90.00776747800089,36.18613144281324],[90.00801737172284,36.200069534520836],[90.01784925391777,36.21406726630555],[90.02559885773556,36.26025104694368],[90.006765625322,36.267268785546214],[90.00159927081886,36.27893232051196],[90.04135530767086,36.276911780069646],[90.05628779505422,36.25581198156742],[90.07991834041984,36.25582841364757],[90.08426449629057,36.25118285450728],[90.12643161346952,36.24701116158863],[90.14368862782104,36.239251265842036],[90.13154107888687,36.227533302410514],[90.12551142083173,36.21523186513248],[90.12802375763502,36.20808548224569],[90.14980748591867,36.196504606008304],[90.19632242069791,36.18788731892703],[90.23500916821443,36.16104979191384],[90.32745360666766,36.158265578833785],[90.34780826033902,36.14300603927911],[90.37201043766606,36.14780159220804],[90.42208020890116,36.13425787870818],[90.47806166313732,36.13263942717482],[90.48921839940598,36.141605861843374],[90.5255422673948,36.14904906602398],[90.54951764824813,36.145642667056414],[90.56752422151344,36.133045898890614],[90.58584727868488,36.13479450149249],[90.61425737058038,36.12708559254981],[90.66164059268952,36.13449362038198],[90.71267316539611,36.11562100186591],[90.74088875143768,36.096400105018155],[90.77482659075558,36.086788150029506],[90.7858714713423,36.065632627237996],[90.80495718782527,36.04462550499073],[90.81885798692983,36.040817086719215],[90.8145029122683,36.036290011316815],[90.83736517223296,36.02035674879645],[90.8510965270867,36.01777831304244],[90.8710156918175,36.0270735450024],[90.92599155015525,36.0319143869064],[90.95100291523188,36.06477593392572],[90.96124761095685,36.09362727393191],[90.97781773423442,36.10730982515115],[90.99354950204159,36.1082668575839],[91.00220483101606,36.101080939194375],[91.03167398074831,36.1003572254886],[91.03808700636195,36.09423036686402],[91.07960618088975,36.08868833018556],[91.1102624576647,36.09525346514777],[91.1205474572535,36.104884388744665],[91.12305612783632,36.11578466229136],[91.11435824224067,36.14135263147468],[91.10307224260765,36.15697859630993],[91.1209644985556,36.155167318112774],[91.1412130683576,36.141885064927834],[91.2535898928077,36.10838344823309],[91.29039707171519,36.0817621567526],[91.386546920784,36.065370168575996],[91.475761249489,36.092077211476486],[91.52213981925351,36.12103257320361],[91.52633183885732,36.13353538923693],[91.5507207212386,36.149089315849686],[91.55390405470104,36.15565793734681],[91.57006365239316,36.15568229709466],[91.5475390552074,36.095831955845185],[91.55206290431542,36.08343444920105],[91.56420598221308,36.081402083196444],[91.56387150351587,36.07173056032842],[91.56897758289263,36.073152038630404],[91.58169607378366,36.06143830993013],[91.5786013157469,36.05618913622219],[91.61487293918555,36.049754129756856],[91.6314833110697,36.03837281198545],[91.64474826570842,36.04401171228934],[91.67818821351001,36.037698092055535],[91.74922012712932,36.01209924699044],[91.79180792137028,36.005967910311675],[91.85731545370373,36.02242624345749],[91.89480880678285,36.023100464527495],[91.90893522759498,36.016252035769824],[91.96666927229295,36.00707388597874],[91.97341792244583,36.00029803810988],[91.97308511819585,35.989019357094186],[92.04172441593157,35.959087799165886],[92.21235545879581,35.9149901442285],[92.25692943521004,35.90824692046418],[92.3130902695262,35.91174396587367],[92.33043166711839,35.90887670931459],[92.34118681222276,35.89660451417556],[92.34994178153076,35.89690884512046],[92.3681248100425,35.91059598661381],[92.40503151223251,35.91546596760137],[92.4509685190854,35.89860519097569],[92.59103333613325,35.87916367309476],[92.69443903152514,35.87793091533406],[92.80133081575873,35.86713238576798],[92.82886569163328,35.86956022161678],[92.98236627021657,35.833553161349364],[92.99276562107994,35.833842918848525],[93.01497722344128,35.8496051116075],[93.0431929120215,35.84719706837879],[93.065687606619,35.84184915249382],[93.08537154400243,35.80751093432732],[93.14554588755591,35.80041211622945],[93.1915775049557,35.78946395844567],[93.2241163177703,35.79101799603511],[93.26404270681238,35.77806740653356],[93.44696070765008,35.77390265917722],[93.51133322990063,35.75777478431093],[93.5297762518784,35.761902622678164],[93.53807234671582,35.781794209171665],[93.54837673304584,35.78319052890377],[93.56704671740478,35.773333371120536],[93.58595009001364,35.77170168701973],[93.6263724159165,35.756574089694325],[93.65931486113705,35.754323666201415],[93.6800729188415,35.765594925056625],[93.69624992921011,35.7524227890142],[93.7064253761871,35.74988787095401],[93.72553571551005,35.75124006288143],[93.74683381951976,35.759701641557655],[93.7604594870267,35.756819052188476],[93.76781970134023,35.73767848685034],[93.78011899218824,35.731093159642136],[93.83463819504915,35.722845161998514],[93.84904627585546,35.71031703013718],[93.88805179643056,35.70289420325659],[93.91429625507561,35.709354537384264],[93.93291304995768,35.70722722580825],[93.962347029215,35.68924987963653],[94.00724153537197,35.67408558384807],[94.03098279851929,35.6491237114855],[94.06049509787331,35.636863287632735],[94.0715942480552,35.641203841257244],[94.12107574032251,35.64074383016216],[94.13513803786,35.65914646734214],[94.15389823678085,35.669812452817204],[94.16847540863766,35.669610287657235],[94.19486413501133,35.66232240965974],[94.21286734396112,35.64932796729763],[94.2274281483865,35.65213923754431],[94.23780019208033,35.661498759467946],[94.26646421138162,35.66131078383478],[94.25226222022084,35.65439401029311],[94.26479434098074,35.63902885923473],[94.27923849332308,35.63355915301634],[94.31252392364968,35.63873560347935],[94.33520422479636,35.63039177057192],[94.3621427008064,35.62924528243735],[94.38292471335924,35.61743531838463],[94.40598213447099,35.614401443352584],[94.43275023013186,35.6240090897327],[94.46005811842163,35.606585082688945],[94.48764205639122,35.60266912275099],[94.50542121136466,35.61029090024556],[94.51976083580838,35.61005773634387],[94.57897606622797,35.60246609729048],[94.590765002066,35.59352632853525],[94.62007790440826,35.60250763135939],[94.62608562743189,35.596445699478195],[94.64143215127866,35.60692971053324],[94.64810307182478,35.598156561921094],[94.6575226264384,35.599745821294086],[94.66460855800096,35.593079235533665],[94.68202798361791,35.58864149305037],[94.69553315358297,35.590177408322766],[94.69728342446177,35.594945775652356],[94.71062547607663,35.59469681776091],[94.71696524974143,35.60790156279844],[94.75796098392571,35.60710301824398],[94.76489814159376,35.61362060015633],[94.78563950670193,35.59152710977096],[94.801790460197,35.60329602702509],[94.80304566495701,35.61164651652256],[94.81618937907743,35.61676181119444],[94.8233901891241,35.605215439044876],[94.82715789786049,35.58375062913028],[94.83728902121496,35.574499921313546],[94.85319385212142,35.57879509157567],[94.85118490757098,35.587006047109604],[94.89375842381602,35.59030831507038],[94.93074105777136,35.57978134155958],[94.92848905049186,35.57473721034232],[94.94049547239857,35.5674675645843],[94.96373939139899,35.565536263377524],[94.97556252951448,35.572847032387614],[94.99487209300547,35.56205034778704],[94.99728601070913,35.5515784230459],[95.00868714750375,35.546631848120605],[95.02017304175537,35.552565308793746],[95.08894088016964,35.54569573094112],[95.09503668887463,35.54257334257129],[95.08994272717115,35.5327036760677],[95.0980450215002,35.51727471864116],[95.1120847265199,35.51204501800742],[95.12554838301944,35.5357492306082],[95.11868927130693,35.54708121053182],[95.12546368830307,35.55691084582826],[95.11710019340612,35.567367416142886],[95.11735107324675,35.57998715248724],[95.13349573091186,35.57353471715771],[95.14696969511967,35.57754776367209],[95.15483932324028,35.59632753368009],[95.14579768465003,35.60383585378424],[95.14839260692901,35.61099624023139],[95.14186251248238,35.63029538987902],[95.17334225617302,35.636818022267185],[95.15433459973069,35.65718776978413],[95.16547054198945,35.673115542802314],[95.17535124020382,35.65727259260432],[95.17401146504565,35.64809959216105],[95.19418938121005,35.642954368405704],[95.20013294783921,35.645623602194505],[95.2108457239529,35.64018161061918],[95.23275930717024,35.64767668479528],[95.24863945099288,35.64772724601015],[95.27794566947546,35.63817388483294],[95.31980827494029,35.64090452688603],[95.34882071899786,35.62461562293742],[95.35632577928831,35.62643821113339],[95.37042406574672,35.6032090135492],[95.39572109106341,35.59809721555375],[95.43251609273007,35.6016515684072],[95.4590700752219,35.6177573938513],[95.46745168783808,35.64731195974139],[95.47784965384642,35.65829874006242],[95.48841693565497,35.660117357027744],[95.54334926325807,35.65600586576621],[95.55516399694636,35.66056849004799],[95.57023727041941,35.653989238432565],[95.58797450872034,35.659275610472285],[95.59750582015498,35.655883940087314],[95.63216572619136,35.65989372148038],[95.63942556854136,35.64961331788192],[95.6481865615345,35.647031340782114],[95.6658689024064,35.65479308939269],[95.68405160966873,35.64856854324432],[95.73855959021547,35.6576704627909],[95.73580230651979,35.65093204443066],[95.74449430322649,35.63432933997457],[95.7722631362114,35.64240934490672],[95.89212186533771,35.63570178347317],[95.90023405543751,35.62442134288005],[95.91644959759377,35.618178384244295],[95.92513660898011,35.62110613532173],[95.9446672970536,35.591534179142684],[95.94833808274225,35.56986761542523],[95.96751488165033,35.553850232896906],[95.96826528548961,35.54512670086955],[95.97909921166057,35.533665961870334],[95.99267979073969,35.53298310048638],[96.05310100523084,35.555772409889165],[96.06294665992999,35.59655132797771],[96.07179429382428,35.61374197770958],[96.08566083183494,35.61308869655242],[96.11668714290619,35.625430741188296],[96.12815520061064,35.63498208818125],[96.13326291595897,35.648010903143074],[96.17917957681364,35.63304953268485],[96.19803141396069,35.632439806893174],[96.20305768021014,35.63675838637215],[96.22348869742105,35.6299049909755],[96.23026711904504,35.64132859899372],[96.24130959216949,35.64784575793168],[96.26204056691057,35.64683514466667],[96.26513169080431,35.64311931604828],[96.29193304039411,35.64877633070858],[96.33797678829245,35.63489178642559],[96.35374114730851,35.652884681494236],[96.42893551494878,35.634515173745726],[96.44107651799378,35.63632102907656],[96.46118715282364,35.6230627436581],[96.48307193037007,35.62247956756267],[96.48525250611185,35.617990271467576],[96.52643267662123,35.6120106702987],[96.54261043214589,35.615169391766635],[96.55207834146867,35.60633618249362],[96.56589481987587,35.603240025646855],[96.5815404801438,35.58183070392864],[96.5923265876256,35.57981590058858],[96.63023456627492,35.58892622429409],[96.66275405189275,35.58396272906581],[96.67467356592032,35.59265791803562],[96.69051082255113,35.59221560832403],[96.69326202708147,35.586200209189],[96.70727055251575,35.585581101623596],[96.71511076345261,35.574282203973645],[96.71244215187569,35.5632711989561],[96.73104851242559,35.55590874420475],[96.77156731974206,35.52763152440362],[96.78503383942389,35.50799222157308],[96.82529390537297,35.501582500605075],[96.84362806419566,35.510709169962155],[96.85040823888508,35.50677159334328],[96.85132910174775,35.49712877581583],[96.89390056833702,35.481740521856864],[96.9023379678673,35.49042356301526],[96.91194079242946,35.48564351232647],[96.92962845587178,35.49922463957547],[96.94080023255296,35.49126144099414],[96.9387164235375,35.46995025084882],[96.94580112438084,35.46727253478511],[96.96320857317825,35.486666614868334],[96.98576690744665,35.479070435417256],[96.9999136336742,35.473238834022],[97.01722235021542,35.4530157376909],[97.0450295113901,35.431296556494516],[97.04278088969413,35.408362904881535],[97.05561082890009,35.391324231889534],[97.07620430723975,35.38232770707176],[97.0972389224635,35.356145883450196],[97.11052338728442,35.347546968612754],[97.14556673784358,35.343722343616385],[97.1767886489661,35.33411634540029],[97.21737464670022,35.335054694709065],[97.23994644285025,35.32241690995241],[97.26124365343092,35.318412285817544],[97.27751584728681,35.319412119415475],[97.29611266956799,35.33876132675887],[97.3106995679025,35.33312267725536],[97.30886624866889,35.320102797232245],[97.32061773296245,35.29946111117575],[97.34751719748144,35.299410544180375],[97.36359870973622,35.30712454873501],[97.3743338794012,35.29551692276841],[97.3821696895055,35.295112878146384],[97.39025103474867,35.30154560935348],[97.41209179616467,35.30282601804141],[97.45779424157813,35.2932200023207],[97.50610204216707,35.27351877389785],[97.53385364604766,35.26721751597248],[97.56041611471514,35.272156507867635],[97.57754122897045,35.261921897732236],[97.60138291774008,35.25832865951468],[97.61256613698048,35.260216156399835],[97.61813143476321,35.266195148744515],[97.60878919763275,35.32817226215684],[97.61387115239529,35.3721414802353],[97.62529036724132,35.384080978002864],[97.63786463658788,35.38732685571268],[97.65976281497286,35.384210138422084],[97.66681958409508,35.37758237240076],[97.66184179610349,35.359939005588345],[97.66696479771116,35.350110871316076],[97.70984180751792,35.34546175787352],[97.75016080138118,35.349214393817356],[97.77575560407861,35.32729836765911],[97.80322016227946,35.322576097077075],[97.81807636159913,35.32647568360486],[97.83827725754622,35.31507476800302],[97.86682032112529,35.315822123460975],[97.8962563849339,35.29641146524201],[97.91727627632532,35.307420074843684],[97.94247898860817,35.287982343620705],[98.02089719659858,35.28621279894591],[98.05113214011482,35.29538400884451],[98.07240750422685,35.294007632692725],[98.07661691299649,35.2981223912308],[98.07772952177584,35.313864719399085],[98.08944349389576,35.32520495375094],[98.10572038761563,35.321208502648325],[98.10896742228726,35.327767866472676],[98.12860778489569,35.33315266185638],[98.14253451722635,35.32368650307394],[98.15165999621334,35.3273312227468],[98.178507460431,35.320730612727296],[98.18025520705781,35.338332917740054],[98.20321344556073,35.40742396756158],[98.22363568867695,35.436699777741474],[98.21946475457113,35.46992660191905],[98.252662717831,35.494241039182285],[98.2526144765567,35.50641761725303],[98.26055461077915,35.513507537239306],[98.27913595117415,35.51507625236353],[98.2827150058011,35.50889336858081],[98.30853086838653,35.50319202281408],[98.30988398886313,35.49490934580822],[98.29596485455578,35.476968545127235],[98.30572874015317,35.47256665967256],[98.31278403798751,35.46198680960702],[98.33075848640702,35.473617128986234],[98.33974586699857,35.46513330610458],[98.3624611029434,35.46028358789631],[98.4017452887767,35.46268912119366],[98.43402351960381,35.47382817894388],[98.45508593645883,35.47079122554491],[98.49171387301564,35.44960012999634],[98.52004283501718,35.44928795360948],[98.59421504020452,35.462020193587136],[98.61729569055207,35.47498533244538],[98.63257083743426,35.49619052054837],[98.64155821180667,35.50141376539714],[98.66015473218884,35.505460524965805],[98.67787745945122,35.51565473531456],[98.7138156447149,35.517086242209125],[98.73803789736417,35.524735088680856],[98.76320509326925,35.544516051972046],[98.77051814067157,35.582000853926445],[98.7649956872583,35.59440502657952],[98.77264909862481,35.600766818840086],[98.79232578090237,35.60407347431509],[98.81647599472144,35.600737402591704],[98.86443968145579,35.56988972059805],[98.91184455091293,35.58129002203029],[98.90008906110188,35.5929408538446],[98.91044215538278,35.60072451479476],[99.00947488649258,35.58390266038387],[99.02259049578714,35.587605113125264],[99.02818393556942,35.601183922868856],[99.03797593416019,35.59890796002472],[99.04034090572618,35.59391509933976],[99.0568962882426,35.59381971426889],[99.07713840456488,35.58649372849457],[99.10505114422025,35.59317727217425],[99.12442377244734,35.61779056093292],[99.15505223838156,35.62037935937069],[99.17644734570429,35.65599792273476],[99.18307651669336,35.65710461157776],[99.20013080542662,35.67658635487279],[99.20450094135471,35.68294899189405],[99.20704085886177,35.72824603090706],[99.19304495948164,35.73782948905105],[99.1846154251474,35.762456294766665],[99.16261266754726,35.7913420921367],[99.13533196063946,35.796832648596414],[99.1202865110924,35.81001660716253],[99.11851668289839,35.82582897459514],[99.12573763065004,35.83474538867167],[99.12350972667572,35.86633373945422],[99.10122746514473,35.88359504577407],[99.11146659832085,35.89564684645142],[99.11563176634138,35.91165056364572],[99.07000068750037,35.9682853669314],[99.069516681272,35.974468566239054],[99.08822659784383,36.00003858565352],[99.07631991457905,36.01726881969135],[99.03922399554169,36.046752102937916],[99.00922198452028,36.05857949309845],[99.01478850879845,36.08642407851609],[99.04416872760518,36.09639024039675],[99.07301487333902,36.089839925127315],[99.08927876525227,36.07629208643477],[99.11034819105998,36.07614246281565],[99.124272455459,36.108562051877136],[99.14786068902295,36.112388281349396],[99.16443279950364,36.097999908958386],[99.17051845256097,36.097885325317876],[99.20731562216861,36.11019064790002],[99.2220468161212,36.13213428698912],[99.22661289228776,36.13272015896691],[99.2382832165641,36.11555574544912],[99.24558347842903,36.11290208660885],[99.27709733780955,36.11713602001375],[99.29941400296029,36.10663390812286],[99.35315350601685,36.115666724418006],[99.40576712000136,36.09655131072875],[99.44537533561359,36.0233996779004],[99.45895812447085,36.01464173603104],[99.48519632610598,36.01319251278323],[99.50059599648633,36.017898251534376],[99.51782748393268,36.045014121962154],[99.53262087137249,36.05639369817876],[99.53877189673229,36.05418222115294],[99.56607550848477,36.016054644997986],[99.5909443818567,36.00705845265668],[99.61039449751307,35.98268726544303],[99.63312894173811,35.97600090388443],[99.64881623536158,35.98474233486133],[99.66131170273378,36.00001922597357],[99.66290518628877,36.01349029652224],[99.65433743640492,36.02740828121873],[99.65843575628101,36.039908092115056],[99.70135672408294,36.079692223043466],[99.72648144741326,36.08692295958867],[99.74181938723767,36.097337201005246],[99.76399034533347,36.136390028925575],[99.78829885270159,36.140534556157014],[99.79189856136274,36.17438698137974],[99.81351241815227,36.19039277970787],[99.82180434517245,36.20523752304328],[99.87512375902752,36.238031044267714],[99.89919297436369,36.24470950162683],[99.92237857697404,36.23422048316715],[99.93514244154804,36.22246030668051],[99.94234704320527,36.21209270751614],[99.93989865980743,36.2020684918061],[99.98530373408197,36.16809640622685],[99.9893125350638,36.156432013081485],[100.00662601849658,36.144750965608424],[100.030313803571,36.11390872002503],[100.0457057401661,36.11819661437371],[100.0684565785266,36.115146808909074],[100.09731383546881,36.06964150462117],[100.13155844310695,36.03746944243611],[100.1884927623204,35.9983683336984],[100.20822019413782,35.96617452125276],[100.2687979807276,35.82803162861033],[100.28883116979465,35.7670723901124],[100.29720445850347,35.76131999982938],[100.29481252680557,35.752509073182416],[100.27544160609732,35.73782360889128],[100.26244426752424,35.71333665233552],[100.26734882217097,35.69816015106133],[100.26321459264591,35.6877404606707],[100.24718464973053,35.67915067297123],[100.22508793322301,35.679751523818325],[100.21931752391126,35.674711463898596],[100.23271381323683,35.669687657025314],[100.23268518700797,35.65814320496261],[100.22251801836084,35.65493111049876],[100.21657591845398,35.64589653619742],[100.21897621678752,35.641854173340285],[100.23891010298476,35.643521367488894],[100.29553013464712,35.57966917830727],[100.27926642038486,35.56495188326158],[100.29100511186272,35.4824165028238],[100.33706818122509,35.48182428897436],[100.35699522793999,35.51152077267473],[100.37240528337021,35.492698930614225],[100.38357617134253,35.48624316399498],[100.43483787157405,35.468220640500675],[100.44141180159696,35.46091679787791],[100.4410124955942,35.448299609710666],[100.44581647034047,35.44104302611777],[100.45903046557848,35.434061030682095],[100.46386605253261,35.42435849864301],[100.46157785250696,35.41986539299179],[100.53654201494768,35.40528453425845],[100.61204349943995,35.40765139727421],[100.71094939143009,35.42352925609237],[100.81500004961806,35.41419064000104],[100.83554054289492,35.43343164883988],[100.91274106414045,35.41796039523049],[100.93347373286468,35.41771034918253],[100.96295252482483,35.401691019401525],[101.04153964045138,35.41151817417936],[101.1253110723433,35.40857768050909],[101.1462317120606,35.39753637569739],[101.1602017061233,35.40361699435031],[101.18249372776404,35.39229586074948],[101.21237168132066,35.3885759021332],[101.22996415521071,35.37162905846922],[101.28820504823032,35.36968995247697],[101.37162234722264,35.3375060432976],[101.40872939681043,35.33996940556748],[101.4352228982493,35.334788618674686],[101.47772259116941,35.352793057256655],[101.4798814130504,35.36154252642953],[101.47271582189141,35.364229126257094],[101.46155438127549,35.37947893151473],[101.45377436928116,35.402707239441405],[101.43108559715455,35.42168369125519],[101.43311637163525,35.42838523575667],[101.40787786507339,35.43859753854741],[101.40514425018183,35.4469373636746],[101.3933865873682,35.45452912826352],[101.39645258957852,35.46153715022823],[101.39102467061602,35.467090573161464],[101.39653986338469,35.476965784441646],[101.38809869752,35.498859119036204],[101.39327842487039,35.50473990802509],[101.40189783076919,35.5070462981262],[101.41809016635203,35.49140017899459],[101.4389426944946,35.489243784831764],[101.46285905686767,35.47361873062175],[101.4843691393583,35.4915777093964],[101.49081054899654,35.49163865064881],[101.52612976056236,35.46934942044431],[101.53665380390144,35.472515907532575],[101.54530005710747,35.482349418958606],[101.54683756991174,35.49208171972411],[101.55798970035123,35.49507548952851],[101.56249393859301,35.503313801988504],[101.57854503790134,35.505410460380915],[101.5920074803105,35.49670685420237],[101.61252737953664,35.503790327823445],[101.62764021768515,35.487062371320356],[101.64429295725823,35.49136200422941],[101.69921299993928,35.481387024482686],[101.73146075969113,35.481245780665155],[101.76590658672866,35.49070515534728],[101.81869971787675,35.478511814674484],[101.82858242509863,35.474870949665956],[101.83188830018172,35.46716279265599],[101.83970230336894,35.46661557585926],[101.85651223890682,35.44087636380916],[101.85274847102089,35.42456125583516],[101.8558420867032,35.40748487801135],[101.84516831261001,35.38010010673229],[101.84730686226202,35.370570943462454],[101.84034289597736,35.36687390192017],[101.8239365571584,35.371297643587226],[101.81166765315027,35.36323998707925],[101.78924148996906,35.357832582716995],[101.79636327772135,35.3298988989585],[101.79390730098105,35.324084478154454],[101.79980955958972,35.313095749368856],[101.7860457513034,35.301910096762235],[101.75910149990806,35.301408309635896],[101.75733768753689,35.29186567469378],[101.74156964774055,35.28473893633978],[101.71638815245103,35.29044563367127],[101.71085880443741,35.27953385774144],[101.71438039986603,35.27204864782464],[101.73919067388469,35.24493249641878],[101.75086637856678,35.22264429700446],[101.756740828423,35.23150651597328],[101.77349138589203,35.23437289619462],[101.79316763209515,35.254325722326364],[101.81089547389729,35.24683029903791],[101.83357644829117,35.24751768033832],[101.8404180144079,35.24283986224686],[101.85970070860813,35.246353147751165],[101.86705095632047,35.25288761924517],[101.87128930220803,35.282694639727616],[101.87886531064912,35.29930835326553],[101.90743227422878,35.31708489777109],[101.91476678425317,35.30747917798163],[101.92378811787967,35.31640709904397],[101.93032189219737,35.339703983588436],[101.96234995906859,35.31733590361185],[101.9766789735136,35.315693652483375],[101.98545017897655,35.30848168256857],[101.99028384164085,35.29359214485683],[101.98293748053499,35.28084129437992],[101.99633113132283,35.257397702465475],[102.0140477254087,35.24961088719901],[102.02540446647585,35.22345567741555],[102.03715087956549,35.214958790533274],[102.04932494476402,35.193638452232854],[102.05018753162847,35.18450021377349],[102.04552484873855,35.18067090845695],[102.01376911884653,35.166087257439536],[102.0215567050954,35.16224680282223],[102.02074876782505,35.14866350639689],[102.03982720823282,35.14053724400225],[102.04491215209968,35.11295040491539],[102.05416838753281,35.09735468148502],[102.0527439014965,35.07927211044352],[102.09897919370675,35.065150553083974],[102.10630263341432,35.05046570912165],[102.10653262945466,35.03188933252389],[102.11285234485761,35.02313655394403],[102.13049561698693,35.015545559439225],[102.12328829262381,35.01083431818324],[102.1226705990342,35.00412310675852],[102.10729282911527,34.99618721644074],[102.10552860331401,34.99006025097624],[102.09309169448778,34.987550452302045],[102.08244288501355,34.96835676830242],[102.0716238749551,34.96112912622171],[102.0738262997594,34.94951761057855],[102.05984305227882,34.94355258730879],[102.04655673599764,34.91802855286517],[102.04595934160798,34.91173071397932],[102.0664488758289,34.88860589577836],[101.98420073564151,34.90097772405512],[101.95811008717168,34.888383554869726],[101.93806881900811,34.88982720754284],[101.91534714475986,34.87501023928445],[101.92051066249057,34.855844620557406],[101.93173208106015,34.847117800150706],[101.92206209492251,34.83803802322477],[101.92667798999912,34.82837515245397],[101.92590373942564,34.804298108115944],[101.91862808522268,34.80118256957202],[101.9165140451591,34.783136675282186],[101.92100782459269,34.762774392178194],[101.91431354392529,34.71908837060466],[101.92833963348839,34.683397456692944],[101.91680021912138,34.66898722510576],[101.9191276012758,34.62063863094223],[101.93290431011256,34.589018752592615],[101.95509644095797,34.58336508980975],[101.96051544677653,34.56481073975451],[101.97226153413774,34.56011247206358],[101.9763934679477,34.54786317825759],[102.00189680499423,34.5396689771618],[102.03892096966524,34.53601099764273],[102.05438566507502,34.54016316251103],[102.09106473511504,34.53760151922155],[102.10494908765261,34.52300515368877],[102.11945914453824,34.524212774212366],[102.1377084369315,34.50502762240496],[102.15393226825715,34.50888357414584],[102.15573615139778,34.49756665948351],[102.1704089296556,34.477600287168826],[102.16766966864253,34.46022741393417],[102.17380471746657,34.44895302539113],[102.19088099158674,34.43851836131598],[102.22081137466338,34.38622981465694],[102.23338080359581,34.38366775523432],[102.25752933346304,34.35708971973633],[102.24224016994533,34.34616932282257],[102.21924090817573,34.340883421041],[102.18809172865782,34.35631510658259],[102.18469766051149,34.35420114043043],[102.17791058899445,34.3370251298118],[102.16755181311228,34.326333783966604],[102.16686280252924,34.308128763000184],[102.1489562172124,34.2934967160156],[102.14639512260952,34.2727270255059],[102.06598061785823,34.294880485849546],[102.05849830815265,34.27976115665616],[102.06245977690484,34.26363036126369],[102.05753108948522,34.25217572314343],[102.0630421414562,34.234621472431115],[102.05784852808375,34.22865387492268],[102.03687479725328,34.231463665141526],[102.01342079939718,34.225867731628796],[102.01236641157831,34.22002090890072],[102.02660715084305,34.20614602905708],[102.0289629432986,34.1920063576265],[102.01646352663086,34.19180834942199],[102.01161218795374,34.18637236922676],[102.00786908707697,34.16725849808691],[102.00134866281205,34.16349538587281],[101.96374801837428,34.16905667877519],[101.95871844620643,34.16511740220498],[101.96584169297005,34.15730076656993],[101.95340849596124,34.111386852247875],[101.89398392635572,34.135787860088655],[101.88639474561045,34.13062510471962],[101.87594256372613,34.131081910576924],[101.86430186522372,34.151808649042174],[101.84988201135747,34.15466106742878],[101.84475594328538,34.153278721776616],[101.85092486335593,34.142740216737984],[101.84661319944189,34.13192997659296],[101.83639632893033,34.12643523629654],[101.81062111596465,34.1308702623971],[101.79718936887724,34.12674581359518],[101.78618120963971,34.13319930350891],[101.76257330936114,34.12446687346672],[101.75562224370225,34.101708102375795],[101.73433770252814,34.081719989073164],[101.72831082361333,34.0883032510791],[101.72644167965638,34.1012504624772],[101.72073402034886,34.09524819619001],[101.72253155241096,34.08811721616884],[101.71700048671612,34.08480178132817],[101.70918152584551,34.08840861517903],[101.71134660292272,34.11067908537479],[101.69879285532174,34.122349307893096],[101.68900757956926,34.1123845831836],[101.67897724154538,34.11134532751081],[101.65333964615117,34.12268683351795],[101.64161780584499,34.14046802748346],[101.65052330739758,34.150494129349624],[101.64221591616364,34.16135203268025],[101.62594771751489,34.167271160225425],[101.62105127989041,34.18001959221116],[101.59858352628396,34.18106825333555],[101.5831314845135,34.190234862178656],[101.58067832475456,34.19720506594247],[101.55676777314689,34.192950611335824],[101.55090053834644,34.205932644144646],[101.53666842526411,34.21350605175367],[101.51372530662148,34.20083375503345],[101.49052784979317,34.19713108511297],[101.48532566107691,34.20558693527635],[101.48813787662856,34.21539587697608],[101.48038847704395,34.22023162121072],[101.4136281316599,34.22984004232462],[101.35818771971147,34.25109122614346],[101.32316753561157,34.2469317612373],[101.32133829818183,34.24989014945349],[101.3296558711928,34.25534210888376],[101.32035249836844,34.26040599432129],[101.32538187484016,34.265166489775986],[101.32262104486935,34.27027975663784],[101.29379254499678,34.27003489752348],[101.28990380785268,34.275781329115624],[101.26717811893963,34.2805972254986],[101.26118991265731,34.28726913557051],[101.26391960264407,34.29448456770967],[101.24689893700094,34.30012205769804],[101.23819010580188,34.29486760011946],[101.23014790191307,34.29686765235449],[101.22734374576157,34.300009324292105],[101.23344553636284,34.32671926951982],[101.22494237620967,34.33158515348497],[101.20521090617532,34.33213133798028],[101.19207356310845,34.338205867936345],[101.18303154861879,34.32705522566113],[101.16706349236779,34.32071842773863],[101.14588686260491,34.33316666383527],[101.13850625237298,34.326174293429915],[101.0963629640904,34.330504795708535],[101.08160092948441,34.32471038269135],[101.06875026068037,34.33026903797201],[101.05274475952785,34.32436803560825],[101.04959758583114,34.33863050006176],[101.03980743274994,34.34211031076131],[101.0361705059848,34.336636723324254],[101.0222922925628,34.34449675896116],[101.01806019934554,34.35268980471767],[100.98531197403756,34.37618736998644],[100.97396807887988,34.37147774353396],[100.95590865407591,34.37921736270138],[100.94945883254248,34.38542836526474],[100.9585222093988,34.4087398301958],[100.94913486462487,34.38533009900749],[100.91656650554931,34.375376223426784],[100.89585620013635,34.37744961737534],[100.88733341959019,34.35809042467957],[100.86712750829267,34.33444740644923],[100.83531145521412,34.327292388894996],[100.82046624683557,34.318985422712856],[100.81483991364998,34.295370449466844],[100.80382835735685,34.28858294343688],[100.80639964043876,34.27294874501441],[100.79791211289634,34.263877352838975],[100.79873643998128,34.25670644020355],[100.80824322917933,34.2487443690384],[100.78995963758506,34.23424376550607],[100.793791269999,34.22630108907418],[100.78646988254151,34.210267493323244],[100.77924690017637,34.205990366119615],[100.78094340498154,34.199371433788514],[100.7676165923472,34.19230452414785],[100.76291822897309,34.18051140909548],[100.78511407988215,34.16731548520195],[100.78719828778516,34.161344937678386],[100.80475420538545,34.15706785847671],[100.81406896652948,34.140675967398],[100.83774449047857,34.11616268811814],[100.83784198381478,34.10609648658247],[100.84376027561862,34.10325687006635],[100.84768947141458,34.091398684084865],[100.8532670785793,34.093855321804156],[100.8687842173648,34.08572935982211],[100.86621534934842,34.074229945414665],[100.87857529448108,34.05983279583473],[100.87804268462469,34.04089264450306],[100.88463189303839,34.03540998942667],[100.89538369236523,34.03770916655125],[100.9080167113988,34.0092745832239],[100.91749839870423,34.00818353607962],[100.93335346411787,33.99163420280086],[100.92629861469709,33.977000552317925],[100.96416109870214,33.94853458830126],[100.97424601138607,33.92116095878053],[100.98659548748641,33.90861256567127],[100.9929619441098,33.89353343402216],[100.99744779689401,33.89128323134461],[101.01765603891619,33.89873804805998],[101.03053772767196,33.884137364003145],[101.04323155944984,33.88596995492249],[101.0504744568259,33.86585679130684],[101.08551653520911,33.85810825931286],[101.10725037661554,33.862364238254195],[101.11495298505513,33.85155725224198],[101.15170489887797,33.846044206487434],[101.1533547927958,33.83787487863631],[101.14821316993581,33.83205523502288],[101.15117291990606,33.82466295207595],[101.18979241294139,33.789264781544986],[101.18241940643745,33.76673811607819],[101.18712586213913,33.74627974001573],[101.17834446629742,33.743775451614226],[101.17654972135281,33.735994157470486],[101.16107291169281,33.72115518719858],[101.16291804481668,33.69452012832726],[101.17640643476012,33.68536310014472],[101.17412687737692,33.676735434295566],[101.16563560040032,33.67002654629725],[101.16481152600431,33.661618626417265],[101.16903287746663,33.65782774332203],[101.17936761740356,33.65504495382627],[101.18111325309778,33.66255178410831],[101.193920256932,33.670170921856595],[101.21603361581892,33.67150983894469],[101.22029864169092,33.6791730106945],[101.2352713743884,33.687339581385714],[101.24674899291999,33.67682068086101],[101.27573229796374,33.66855674584785],[101.27935832109749,33.66382034181219],[101.29656609796979,33.66491741539526],[101.30110864817303,33.65967864272051],[101.30956346372905,33.666077835699475],[101.3185982637391,33.659492096379886],[101.33241368552643,33.66018142907055],[101.34333288648966,33.65449390046974],[101.34787460586114,33.65872050963857],[101.38907122822935,33.64677629365319],[101.42094111811072,33.65584506849448],[101.42651666790601,33.660926276568865],[101.4262244662157,33.6817225325173],[101.43282113761128,33.68630671210428],[101.44140921495197,33.68152698682933],[101.46796963675621,33.68784360987278],[101.49960490530628,33.70446182182271],[101.5096179213703,33.695932060668774],[101.52633529906478,33.693085135830174],[101.5404224831738,33.69704214449705],[101.55163963973143,33.6902177730336],[101.55629937322347,33.67154887620544],[101.56551935926298,33.66922781035757],[101.58084380477285,33.67693301696033],[101.58510898063356,33.673448554820226],[101.58700025656589,33.640007071814985],[101.60100044474183,33.63434019154085],[101.61063472070718,33.6179517664059],[101.61533067465025,33.60075157980236],[101.60961983843887,33.57841386418263],[101.6113631294103,33.56591465614847],[101.6173163029796,33.560674203574735],[101.61310675483085,33.54053875227459],[101.61843018241358,33.53380023931176],[101.61441325685492,33.52501035865425],[101.6209955180307,33.50426663833098],[101.62979949859381,33.49421305239122],[101.64478916194848,33.49721632398928],[101.64831813456608,33.504072228068146],[101.67538449416492,33.49834523734393],[101.69887786561718,33.503480844601704],[101.71295153233417,33.497659252457076],[101.73400187841155,33.498107860065915],[101.7476097224477,33.507897454661375],[101.75657360784919,33.52352179159049],[101.75729951076393,33.53739712030847],[101.77213561065746,33.54030577423237],[101.7754822264249,33.53725310809469],[101.77397983816233,33.49381073832702],[101.76699846354455,33.466882792235225],[101.7674342793001,33.457865472683906],[101.77417559421998,33.455343188826575],[101.75769130315142,33.44653199938639],[101.73269648695758,33.4469100156843],[101.6939972643747,33.43584633856982],[101.67186101541284,33.39333549789936],[101.6610834713822,33.38358144969842],[101.64764704833317,33.32659562818753],[101.65262651838829,33.317399379325295],[101.67645575902493,33.299445308214864],[101.70492966823187,33.30045933914925],[101.71310432359213,33.29116397346889],[101.7338163730289,33.28176693445532],[101.73856217184652,33.271040475387494],[101.72573432156247,33.258321450289394],[101.72568597510286,33.242403759979595],[101.71746063075933,33.224112789244245],[101.70831883320953,33.214926284793975],[101.67887625739355,33.20402511453225],[101.68491841621595,33.18745995823246],[101.68119728647869,33.180988228960395],[101.6620575212265,33.166470590294395],[101.65248746028955,33.1648604042579],[101.659255503321,33.137828486403016],[101.64925015463531,33.131083308729856],[101.63170001712572,33.10357980000004],[101.62323554666962,33.103746991253054],[101.55772579321588,33.167578923604665],[101.53577884555129,33.180741426891196],[101.52815222725435,33.18084798636716],[101.52538227754259,33.18985352378015],[101.51372000828633,33.19501532290863],[101.51090006984519,33.20555305670062],[101.50147151793635,33.20943549217974],[101.49374329765885,33.22258364437992],[101.48353637167986,33.22887333584402],[101.47085481613328,33.22483331697287],[101.42619483801165,33.23209490416678],[101.40138403756012,33.2270123595214],[101.38483016954383,33.20918528043794],[101.39005648121343,33.20639727393489],[101.39422034997497,33.188966470203866],[101.39015443588526,33.18101826335056],[101.39184904992814,33.1596391056328],[101.38236510172601,33.154791730648704],[101.37244911971354,33.173207412133664],[101.35649505898009,33.18283737414157],[101.35523833791646,33.19451249518376],[101.34277028970716,33.205204673504305],[101.33721382655108,33.2181363396282],[101.32697227482467,33.22535108423287],[101.3267782434267,33.239177412087166],[101.32243052262086,33.244189503408826],[101.30866214109463,33.24634286108839],[101.29551899321447,33.26384585976493],[101.2708629548116,33.27025512956326],[101.24264885050346,33.26454218955233],[101.22598428490551,33.27400779134291],[101.22099247834052,33.27222149665843],[101.21488523828167,33.25776818836031],[101.20373329179469,33.25775353189819],[101.20004702822779,33.271538218500154],[101.18171117912564,33.27191370669598],[101.16996963464848,33.26351215817703],[101.16832034147285,33.249873798077],[101.15560917841222,33.25041393170754],[101.15046733174053,33.24630749672625],[101.15376678920057,33.236648557654405],[101.14513194505112,33.236227040294885],[101.12278065044276,33.22255843376724],[101.12021176431082,33.20459677346579],[101.1134772246317,33.19798858989778],[101.11841945147846,33.18844793856339],[101.13548352622719,33.188467883158054],[101.12767810580297,33.17863126671483],[101.12850209634712,33.17168297317106],[101.14091503027876,33.16462610929544],[101.14314643845653,33.15257685126539],[101.15299380021727,33.152719393207214],[101.15682612671833,33.146119777697706],[101.1493078965687,33.134238659639024],[101.15086050306029,33.127102255813305],[101.16167903441601,33.12129676983975],[101.1678411425737,33.10229543447651],[101.1571676318978,33.09494472765229],[101.15071545095424,33.096594109288894],[101.14140368707035,33.085989060085026],[101.14586621446915,33.073901631111966],[101.14222873548628,33.060827817073296],[101.15755761595528,33.059444069434186],[101.16794013972236,33.05407207394348],[101.16968735341962,33.04771276590287],[101.17783815906785,33.04857444276322],[101.18264135040602,33.04328594424847],[101.1799243821557,33.02923667499479],[101.16973655786583,33.018087313532504],[101.17580160442125,32.99862404322856],[101.1840987899513,32.98847723659915],[101.16231425195821,32.98551967812543],[101.12724895808309,32.99145468643447],[101.12720103464187,32.96237428669239],[101.13180776984339,32.949986337180526],[101.12201713396877,32.91199575725498],[101.17449624539317,32.896192445779256],[101.20268145659821,32.86992356726393],[101.22091071895643,32.86086778398858],[101.2208634403638,32.84044704523102],[101.23602951939257,32.82993009151642],[101.22687430723907,32.7995308978944],[101.231865405532,32.788719295417444],[101.22261101641462,32.773744366578995],[101.22590641854008,32.75717289408541],[101.22130386921145,32.7280373924147],[101.18837878162002,32.68880811857358],[101.17469758470888,32.68229798039389],[101.16150187979179,32.667601434768585],[101.12318950968074,32.66039438133264],[101.11674422198634,32.65408981787323],[101.11907102167717,32.63487819230893],[101.10996205308052,32.63934475598693],[101.11097785966389,32.67395557807292],[101.1000813674503,32.668787518674385],[101.09601511590189,32.67618614150378],[101.09228792360487,32.67133755158944],[101.08217568488787,32.674049572018454],[101.07530780442394,32.68482243390954],[101.06955558300291,32.68438782010397],[101.0288943661347,32.66277531679629],[100.9956593265137,32.63014833495864],[100.96188939993083,32.62658992763172],[100.9307411859105,32.60314533045818],[100.92440920849667,32.604760511576195],[100.91348033854456,32.61907475647646],[100.89663999515032,32.61816458773053],[100.88622722129683,32.63504756356523],[100.8593767853586,32.63797986725989],[100.83269840651754,32.65135203646857],[100.8233843999433,32.64730311692141],[100.80562870752938,32.64922417191561],[100.79825637610377,32.6572428788048],[100.77799071782933,32.64156209723145],[100.76844384598814,32.65024734151662],[100.76762014067782,32.66482794749039],[100.75062127017704,32.65285426828617],[100.6907090578675,32.68005499263045],[100.6825935651639,32.67770874349899],[100.68346236537191,32.673424931620666],[100.70791179033706,32.65212893095496],[100.71666174516594,32.630761815999904],[100.71617802449478,32.619420424429336],[100.71081288462561,32.61325123710445],[100.70274161757325,32.61357766088794],[100.675107417636,32.63026159962277],[100.66491546095504,32.62675340580407],[100.65738049834857,32.60212703629583],[100.65685151686701,32.54913442269642],[100.6670926219101,32.526123596950804],[100.6623585347356,32.52486989818779],[100.64428989305631,32.52894034655218],[100.64197121749358,32.534085921639345],[100.62181335086329,32.54303754624547],[100.61779963049541,32.539604178395486],[100.61412342444297,32.54761715419434],[100.60038037764883,32.55106056642964],[100.60173536497196,32.556105980692365],[100.58749964272678,32.55468617342403],[100.5866763641474,32.561213088833505],[100.57543467112313,32.55477205185605],[100.57121695098716,32.55930848265585],[100.57611290861487,32.56334938059999],[100.56491250463061,32.570871316906256],[100.55453152131896,32.567891418782025],[100.54996968347088,32.57324220817115],[100.54399997527258,32.572315963670505],[100.54390241675424,32.58369540551124],[100.53404511806652,32.58874664754773],[100.53894935297677,32.59638617215066],[100.5230683170156,32.593761160339426],[100.53229701892491,32.60402836895485],[100.52442792515748,32.60596094643296],[100.5244277080231,32.6131145415999],[100.50761797414098,32.61208972473122],[100.51412820903747,32.62477442014144],[100.50329249592201,32.62918484739777],[100.51573090851656,32.63407268276109],[100.5093658240162,32.63610136390776],[100.48749797404078,32.669483077354016],[100.47496263616586,32.674673962797556],[100.46874361632372,32.69672558018894],[100.45524242418912,32.70371223820011],[100.44849510000256,32.69623711895591],[100.44262200785283,32.69805201766149],[100.44800891717023,32.70023434332923],[100.44053487212307,32.70481526194597],[100.43335437274835,32.72217577900534],[100.4188065840832,32.733863782690776],[100.3955548126255,32.71035142548942],[100.3914404095354,32.699305775590894],[100.37682761997516,32.70129903384755],[100.39729708936584,32.741188270185425],[100.40451273152561,32.74474250575373],[100.398555106691,32.758425365878196],[100.33307859500968,32.72043796100866],[100.32230280410957,32.72813692094873],[100.3019083731022,32.73059692124451],[100.26307013201128,32.74498854210856],[100.2568256730945,32.74247454072269],[100.260843984841,32.73136741656389],[100.23687050104901,32.722400239464015],[100.2359504751224,32.70789161955958],[100.22955247027606,32.69854015684122],[100.22848798471811,32.65285461939946],[100.21893658653268,32.633285521616976],[100.2203915860678,32.62531689851693],[100.21272866869683,32.61862866344789],[100.21365029868589,32.608830135904796],[100.19797994575042,32.612904600993566],[100.19662107426709,32.62181932678871],[100.18671964406313,32.63304939253288],[100.12673184587942,32.63571989800515],[100.12362745544391,32.64182717709285],[100.10816153061445,32.64225699533272],[100.10394481881649,32.65885287197425],[100.08641104546551,32.671229123717474],[100.09130084100667,32.68397899730196],[100.10171511528844,32.68656073348145],[100.12381925273422,32.71694844835715],[100.13444212153654,32.71683554540791],[100.13720766463479,32.72313248606083],[100.13143298105035,32.75515167244706],[100.11785191072225,32.78727693341712],[100.11557204809154,32.804534524007764],[100.12163251008445,32.83886003941664],[100.10820277136197,32.848590274308684],[100.10975337783837,32.86103254166097],[100.09604118606607,32.86972964270684],[100.08713127807573,32.8662448490585],[100.07972478825106,32.87655191636453],[100.08088648302555,32.88716642287364],[100.07406310469068,32.8875490992901],[100.06453511196567,32.89798622008128],[100.05380277689386,32.89250950135324],[100.04196418474557,32.900854986839],[100.02820034445253,32.89793733312378],[100.02583473564025,32.90080193970777],[100.03689222017312,32.93119244636389],[100.0110621937797,32.936128592300676],[100.00116687032751,32.94381644105919],[99.96969609327162,32.94133567109426],[99.95540075646579,32.95037858903618],[99.94631634446256,32.98917497247235],[99.91008894682926,33.02083066157051],[99.90200131608799,33.04929797946283],[99.88862968057944,33.04553355854162],[99.88320054570319,33.05107839677747],[99.87641282422221,33.04800079589258],[99.88155274129397,33.02747245755728],[99.87665657147394,32.99601574985516],[99.86259127069032,32.98248027392612],[99.85560498295267,32.95159765406616],[99.8496849175285,32.944150983289006],[99.83119174595751,32.95375136062446],[99.81410604678484,32.943269464995815],[99.80158496165015,32.94418911411964],[99.78402174921052,32.95935171548161],[99.77403315140508,32.95447733884165],[99.7658889265495,32.94135379925009],[99.76860407212888,32.93310205057244],[99.76273957542877,32.92656971228006],[99.7770883236681,32.921745793585316],[99.79076691277744,32.88534158346665],[99.78518921884607,32.864038387637784],[99.77757478651749,32.85780952739367],[99.7728245824034,32.835340486559765],[99.76555320112611,32.825781700638785],[99.76855890993097,32.80459980026203],[99.76090270469055,32.79481779727317],[99.75896465802394,32.77217826300691],[99.73751170070074,32.75094900441465],[99.73818975635223,32.73477778309896],[99.73054399580353,32.727955332773504],[99.7159342071631,32.73501665037822],[99.70495738809761,32.76642435825987],[99.672434329349,32.769877874733275],[99.65996890120053,32.78065690581465],[99.65016050512912,32.774542030230556],[99.63899553257308,32.793144346048805],[99.63106792000472,32.794632801381546],[99.62115443944813,32.786186885284955],[99.60644724992116,32.78327296780003],[99.59536089388679,32.79283382850728],[99.58625507376586,32.793586080650414],[99.58073149944948,32.815901321614525],[99.5560981842341,32.84245708479493],[99.54648862108388,32.84683779252524],[99.53648864244033,32.844521364116204],[99.53129217725954,32.85032086804896],[99.48897923967729,32.85315206317532],[99.47950595426468,32.86019224322391],[99.45182869110322,32.86448837725817],[99.43392651907804,32.87925083718748],[99.42432766068995,32.87967855652928],[99.38438439989447,32.902219106080594],[99.37490620289962,32.90181864085385],[99.35277417629517,32.88753015909589],[99.33775272010976,32.89776243992264],[99.3260177887795,32.883653715128084],[99.30660359852384,32.88108353812708],[99.30071068266632,32.886495240689776],[99.28307508922984,32.887494249927464],[99.26509069618444,32.88245511964826],[99.2584629796002,32.910153871199526],[99.24462316279504,32.929617838575965],[99.24500952266158,32.944400179501365],[99.24994672004411,32.949955699643965],[99.23217871231152,32.95657130233684],[99.23372775963739,32.985497763812525],[99.22282869044027,32.992923591135565],[99.21410572928107,32.99225570305936],[99.21255436510909,33.00621029127225],[99.20421756354435,33.01372480617882],[99.20756227098815,33.02075375281433],[99.19422852753928,33.03810131407554],[99.17832102016413,33.046850933675366],[99.14640924610468,33.052340028302645],[99.12348201726323,33.047952559527786],[99.11234021063028,33.06621455361471],[99.09646153159902,33.06649248156085],[99.08930014709037,33.081095738223894],[99.06928530315446,33.0779789621392],[99.05865725669264,33.08899204818784],[99.04808387294109,33.08575345894198],[99.02487576367817,33.09702700945621],[99.01788205196887,33.085422936203166],[99.00148733184574,33.08450171063809],[98.96922571231318,33.10167059248591],[98.96420846347539,33.11859704711839],[98.93495448109825,33.1179059113829],[98.90227153183217,33.12811043704442],[98.89675372587271,33.13590768618598],[98.852904943281,33.15787393328321],[98.82914058187409,33.18340505316488],[98.83030389328248,33.19892983911188],[98.82496822174161,33.20495879079579],[98.80959311966704,33.20918580046589],[98.80406501456133,33.22137826477726],[98.80808938339418,33.24734722559373],[98.8129876747456,33.25035795596052],[98.80125064511088,33.272570660725755],[98.78418604581593,33.2793001168063],[98.75909263542118,33.27918627221895],[98.76015700189686,33.29281719592588],[98.77337957569095,33.30376580517423],[98.76364358306726,33.32301045460783],[98.77483240717032,33.33017422642515],[98.77274857991024,33.342170360663225],[98.7828277360627,33.345961282317795],[98.77832018064578,33.354859224824565],[98.778562877608,33.37360087185804],[98.76223755472834,33.38086549536393],[98.74592308345957,33.40699970172979],[98.73344181671037,33.41212376223987],[98.74355130578941,33.45619207488512],[98.74161485640722,33.47953044410504],[98.72231891204632,33.48799729349227],[98.72488079020657,33.50502613405458],[98.72019159181815,33.50920992525304],[98.67956017154172,33.52346245471527],[98.6682598851565,33.54624455640582],[98.65555748970961,33.543306644912235],[98.64951998314653,33.546529063219864],[98.64869787699826,33.56224117211021],[98.65739263612058,33.578713270317174],[98.6545423402059,33.59367588028806],[98.62235960854866,33.6121674156908],[98.61684643095393,33.62855776476549],[98.618345878112,33.63973777407722],[98.64719924660066,33.64511792897501],[98.65656949792042,33.65335371495391],[98.6433339632756,33.65882591739383],[98.63859845750524,33.66764453643401],[98.61021948709033,33.68492140303381],[98.59705570896826,33.69862101294204],[98.59584492995768,33.71903625950326],[98.581460524255,33.734120678873126],[98.5398441925337,33.74827212498946],[98.53042303843321,33.75730039583083],[98.52843141090702,33.7670917213543],[98.51745338378646,33.775707228132966],[98.49296403351637,33.77106281624962],[98.4862584582353,33.7838239508725],[98.49233246812801,33.79777062174444],[98.47746333791868,33.830521163808456],[98.46293965847774,33.85002858461558],[98.43881505460232,33.843112112241364],[98.40614046904058,33.86871360504],[98.42639650791843,33.9096913961476],[98.41117790338977,33.926289463352916],[98.40870700606999,33.94311218543301],[98.41481052673478,33.95850881032409],[98.43042101602921,33.96333239100044],[98.43953926190589,33.97991439643903],[98.43997570651433,33.993782262781465],[98.42750903126573,34.0305138151154],[98.41795959278731,34.032550406890486],[98.42164318906008,34.036212579359336],[98.41161150097716,34.03887131545022],[98.40909174145297,34.04662062249687],[98.39127260958092,34.060384665545136],[98.39819440832697,34.07305761447728],[98.39170796168945,34.07519800841814],[98.40453764436954,34.08570047785434],[98.40119608877797,34.08920145800001],[98.33813266624408,34.09633665768334],[98.30831900610717,34.08936055841478],[98.26997224782276,34.09018572841048],[98.25579018215505,34.08480235525898],[98.22841484287368,34.087924436269375],[98.20673396439402,34.08043326375365],[98.19717446366074,34.09371044310804],[98.17241679948505,34.09914979156069],[98.15673487636685,34.108940263754576],[98.13319567185057,34.10822197265693],[98.09746229257135,34.12442558311946],[98.08433862223366,34.125699190638954],[98.07533668669065,34.11969897429781],[98.06053626577452,34.12191699095089],[98.0507718845022,34.11667027434163],[98.03782299577345,34.120694297166445],[98.0361325649939,34.12553020348679],[98.02666640650239,34.12530715197066],[98.01208609733831,34.14742702141749],[97.98611619676689,34.162643195291125],[97.94472215673217,34.20025605689008],[97.92658674006074,34.199818693634924],[97.8979231768176,34.21137280057423],[97.88910151338472,34.20635751661358],[97.81028109585539,34.209178109914184],[97.80309689363618,34.19991590142508],[97.79605893983346,34.20086347652527],[97.79042937923373,34.179752089499175],[97.78465522737139,34.17674256406135],[97.78713055601006,34.17222701889459],[97.77286940328523,34.163731351281406],[97.76627426663683,34.164995200260655],[97.76617827310204,34.16016656371654],[97.74291986891384,34.156757520935365],[97.69932437408379,34.13550042392362],[97.6658284737291,34.129120664800354],[97.66365330305808,34.121258899326484],[97.65867465661827,34.13380987895955],[97.6585678057396,34.13389740338377],[97.66313550664692,34.11624019713321],[97.68289365016133,34.08245798848145],[97.69448343348635,34.07832411299304],[97.69323296954661,34.07112597577418],[97.70265602936297,34.0598890450921],[97.70182287243442,34.038472163045746],[97.68689658409608,34.0183830666428],[97.67514249195362,34.01265038026143],[97.65813499155819,34.014039423337984],[97.6523830539623,34.00024776327132],[97.66113734315957,33.97692553085392],[97.65947021389121,33.95815644922494],[97.6440451074557,33.94521517621656],[97.64204405513925,33.92676707486418],[97.63362014729113,33.921018662961124],[97.6015673672608,33.93195760905962],[97.58259698762448,33.92314798990388],[97.5462741866895,33.9159763406344],[97.52448865541969,33.90439987716082],[97.50436795890684,33.91403781053664],[97.49799641585116,33.90558744445801],[97.48215106076483,33.89865410209649],[97.46781848725132,33.90372073296117],[97.46002600133757,33.88899029727534],[97.419180465808,33.88836167217894],[97.40998521999353,33.883670320652854],[97.39453043357696,33.89083944045171],[97.38885329213966,33.88147076541554],[97.39561635768513,33.87120513753029],[97.39177561587267,33.863098131379644],[97.39728716491986,33.84983221048566],[97.37108040267672,33.84356928270879],[97.36807770424475,33.82570984955722],[97.38501526297733,33.809045563895616],[97.399877400091,33.805663489220855],[97.40564123179847,33.79670580767468],[97.40906847422323,33.7692161627475],[97.42252746728913,33.756508788976696],[97.41575498592108,33.75002812329402],[97.41709333672038,33.730129157061825],[97.42754697103842,33.7231446728246],[97.42169263511988,33.71116693736527],[97.43474346665991,33.6819287419927],[97.42788243139667,33.67619042526242],[97.42846842238649,33.666140178536054],[97.41500503032233,33.635825795439814],[97.40522787254658,33.63013701622849],[97.40556208583455,33.621630959143864],[97.41500566101631,33.607112648081],[97.43633490496633,33.601870315885854],[97.44788756281766,33.58539065703237],[97.4611215240229,33.58330461131244],[97.47218260325013,33.589162762428074],[97.51024310516593,33.584337634395474],[97.52474660062488,33.577655573705805],[97.51938193807543,33.56795435037504],[97.51812531552604,33.53404245466241],[97.51150271493793,33.52132165716123],[97.52860342343071,33.501938268158426],[97.54175868674277,33.494677213896345],[97.5462819831921,33.482497852351855],[97.5547404659237,33.475972789513904],[97.5522288824126,33.46768397433468],[97.56846879374673,33.466250905149],[97.58001243176851,33.471911083570504],[97.58778860247476,33.46217138894516],[97.60424903178128,33.45388735727689],[97.61042824518097,33.461087198179186],[97.62520177594239,33.46352263313529],[97.64488837946521,33.45102027850405],[97.66456469932263,33.44966659606972],[97.6721515043454,33.44451962161549],[97.67440284413038,33.435004079215986],[97.7032521710974,33.43090287680888],[97.75300766753706,33.41207417280637],[97.75827420356127,33.40510399860067],[97.74824471315682,33.405668430003686],[97.74949902199069,33.399261800371136],[97.732960547703,33.38909171298011],[97.71952103768258,33.38816086998537],[97.71551603274393,33.37827192027088],[97.70667263951353,33.37809485001377],[97.7104271026853,33.37121039707722],[97.70183576045018,33.368301637144235],[97.70183588604195,33.36170435938595],[97.68907657023969,33.364789231533194],[97.67590402410165,33.35953580199573],[97.67565486085321,33.343039761494374],[97.63646679314856,33.34669226315051],[97.6216999662917,33.33808434387913],[97.61502279516768,33.30390950512366],[97.60567146059803,33.285568942344916],[97.60884536741672,33.27033311951826],[97.59255636057112,33.24811464862913],[97.57733967059892,33.236592703123065],[97.57483094483932,33.222999188484344],[97.55449451878053,33.213719046961444],[97.55014051259933,33.20696010136553],[97.52927896946692,33.20620361733005],[97.51754487850638,33.184690581376415],[97.49432186513349,33.16974688012341],[97.48736357712885,33.17019894656915],[97.48577054815183,33.147287843680864],[97.49742438056597,33.14000039547798],[97.48719721753528,33.108739467045986],[97.50069472857584,33.09890244699713],[97.51645675810353,33.09965749423999],[97.53690772042216,33.06043050733798],[97.54101279887172,33.03703241279461],[97.51754786736193,33.02434156210542],[97.4970914502813,33.02395033041895],[97.4996065200279,33.01378782442574],[97.5233317878011,32.99086168829941],[97.50572768229941,32.98352370378492],[97.47822944843031,32.982969005396356],[97.46440255640975,32.97413001409477],[97.43459135659839,32.97738264506228],[97.41468529685945,32.97049987627475],[97.40942013179439,32.963917840998064],[97.37510348274277,32.95872361790558],[97.3613416960636,32.94401791455806],[97.36893152947418,32.92861861087923],[97.3596744206619,32.91987117046717],[97.36109290446497,32.90906999432431],[97.34942018795874,32.906009782243515],[97.34741983502992,32.897913424689555],[97.35367229870346,32.889564999887405],[97.37543851702294,32.88811399589788],[97.37201876130126,32.87556158868626],[97.38637139886036,32.86853484774819],[97.38211487612408,32.8574017135085],[97.39171382247417,32.84426564249804],[97.39238269700579,32.830802292501275],[97.37944457585867,32.82839320327072],[97.38161576189604,32.79472237797217],[97.40106899021129,32.756713086513706],[97.42405525104918,32.72990860023677],[97.42865613473103,32.714200111552124],[97.42313576019045,32.70711939842465],[97.42857329918915,32.701236936379274],[97.44179528284636,32.69907245208283],[97.44288360747845,32.69252127907878],[97.47069270509871,32.66626935133729],[97.48024740655164,32.66634369389341],[97.48234359887259,32.65651562939346],[97.50045246328865,32.64891916730278],[97.51277646146457,32.65123688170302],[97.52409272771499,32.636014840453804],[97.529708502407,32.6418277995169],[97.53967919594798,32.63434350693223],[97.54336546818816,32.624181648748234],[97.58370615789207,32.61782413767404],[97.58872249712319,32.611788675096165],[97.59874993723565,32.618825864376404],[97.606016620937,32.61782661247551],[97.6102759672643,32.598523044881],[97.63039019909466,32.57805667581864],[97.63889912376463,32.578520712565016],[97.67475222829576,32.55015418786259],[97.69342833362265,32.54712247513445],[97.70510406585888,32.53530340210906],[97.73055558565115,32.529706915710435],[97.7029357807276,32.52578885426161],[97.68392337116802,32.53291200151975],[97.66925047344253,32.519710822962985],[97.62989075967911,32.526962410706524],[97.62029433617745,32.52183405347538],[97.59139799170428,32.533645713100306],[97.57818863030992,32.525358192018444],[97.56597368291196,32.534814319456295],[97.53984934478298,32.5390467385722],[97.53138671468147,32.52798633452345],[97.5206583973957,32.52829020935525],[97.47262311313517,32.546755840130444],[97.4628184656635,32.55800456457125],[97.46382403656462,32.57327586338918],[97.44757379774731,32.589456647722095],[97.41118299901069,32.57723785821721],[97.41101618117882,32.5656330661067],[97.39606258197882,32.560779131171834],[97.38662790977753,32.551459721979384],[97.37402767781602,32.54847343722572],[97.36059919985766,32.55657884756074],[97.35701407951697,32.56585986012647],[97.3405087597903,32.55894332291901],[97.33050827543994,32.53936117091331],[97.33267522752595,32.527270810149766],[97.32784119087954,32.52009363110211],[97.33392539740801,32.51679767725792],[97.3505955585802,32.5193377335431],[97.36885639948106,32.512218741258685],[97.3736111737882,32.50583436200314],[97.38779792179999,32.50367964470801],[97.37511348626198,32.48426657452292],[97.3495968226078,32.46682665652917],[97.34109468024968,32.444978612177906],[97.34876331512329,32.43500886220876],[97.36794047361879,32.437361178995225],[97.39063743907163,32.42495288649883],[97.38838433422426,32.41418487532699],[97.39907187637594,32.40474483429571],[97.41185646583516,32.37905304149655],[97.41553474218551,32.36246225560068],[97.41235872559895,32.32969300650847],[97.42398069562626,32.325646430832805],[97.41394674732733,32.31843535539162],[97.41720810770018,32.30311952048845],[97.41210830280542,32.29696114185339],[97.39623513901304,32.29433417629675],[97.38897158719952,32.28517327170322],[97.36635949940872,32.2760301218945],[97.35193441680106,32.286123955047216],[97.34159777424505,32.282227905953675],[97.34368158650197,32.29921542520544],[97.31859497724864,32.30518031023737],[97.2978393592784,32.29681730804971],[97.28941812910492,32.28298871966049],[97.27624079005994,32.21089760115345],[97.26372445207038,32.18496195784139],[97.2687319081611,32.16479008340421],[97.27540789071193,32.15847424280332],[97.27090284617393,32.14356225222665],[97.288420710467,32.13469835588792],[97.31318126954716,32.131310323647476],[97.29275726406401,32.09906149005151],[97.30734783203974,32.07621751675374],[97.2556281242394,32.07522124206593],[97.24903044144774,32.0861315895641],[97.24025880572032,32.087086318470774],[97.2319847696193,32.10655270764462],[97.21927612964642,32.11146792540534],[97.2117488867351,32.099214325458924],[97.20380097679627,32.10001645893666],[97.2015426929357,32.09264536369888],[97.23248672010784,32.067417982887235],[97.23599731868929,32.05746555078735],[97.23140054158567,32.04717340871336],[97.21283720824282,32.04528797465973],[97.20053882469594,32.05484289084349],[97.1869816182865,32.056830544322736],[97.16982239989062,32.03645680759051],[97.16890181270288,32.0264976183959],[97.15241282299331,32.03905759275708],[97.13007329564157,32.04606044053969],[97.1049101652672,32.03976984330806],[97.07727461394629,32.05064265117644],[97.02827429952025,32.051118942911906],[97.00621540941279,32.07013450923437],[96.95260334526705,32.06396729970825],[96.93576847759074,32.050741338548534],[96.93401706258126,32.04361219476251],[96.94652121799831,32.02487329017225]]]}}]};
+
+    const sjyBtn = document.getElementById('sjyBtn');
+    let sjyEntities = [];
+    let sjyVisible = true;
+
+    function buildSjyLayer() {
+        const ring = SJY_GEOJSON.features[0].geometry.coordinates[0];
+        const flat = [];
+        ring.forEach(c => { flat.push(c[0], c[1]); });
+        const positions = Cesium.Cartesian3.fromDegreesArray(flat);
+
+        // 区域填充面（贴地）
+        sjyEntities.push(viewer.entities.add({
+            polygon: {
+                hierarchy: new Cesium.PolygonHierarchy(positions),
+                material: Cesium.Color.RED.withAlpha(0.18),
+                classificationType: Cesium.ClassificationType.BOTH
+            }
+        }));
+
+        // 红色边界线（贴地）
+        sjyEntities.push(viewer.entities.add({
+            polyline: {
+                positions: positions,
+                width: 3,
+                material: Cesium.Color.fromCssColorString('#ff5252'),
+                clampToGround: true
+            }
+        }));
+
+        // 标注：三江源地区 + 长江/黄河/澜沧江源区
+        const sjyLabels = [
+            { text: '三江源地区', lon: 95.9, lat: 34.55, font: 'bold 20px "Microsoft YaHei", sans-serif', sub: false },
+            { text: '长江源区',   lon: 93.2, lat: 33.8,  font: 'bold 15px "Microsoft YaHei", sans-serif', sub: true },
+            { text: '黄河源区',   lon: 97.6, lat: 35.15, font: 'bold 15px "Microsoft YaHei", sans-serif', sub: true },
+            { text: '澜沧江源区', lon: 95.4, lat: 32.6,  font: 'bold 15px "Microsoft YaHei", sans-serif', sub: true }
+        ];
+        sjyLabels.forEach(l => {
+            const label = {
+                text: l.text, font: l.font,
+                fillColor: l.sub ? Cesium.Color.fromCssColorString('#ffd54f') : Cesium.Color.WHITE,
+                outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
+                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            };
+            // 源区小标注：拉远时自动淡出
+            if (l.sub) {
+                label.translucencyByDistance = new Cesium.NearFarScalar(1.8e6, 1.0, 4.0e6, 0.0);
+            }
+            sjyEntities.push(viewer.entities.add({
+                position: Cesium.Cartesian3.fromDegrees(l.lon, l.lat),
+                label: label
+            }));
+        });
+    }
+
+    function flyToSjy() {
+        viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(95.5, 33.4, 2100000),
+            orientation: {
+                heading: Cesium.Math.toRadians(0),
+                pitch: Cesium.Math.toRadians(-62),
+                roll: 0
+            },
+            duration: 4
+        });
+    }
+
+    function toggleSjyLayer() {
+        sjyVisible = !sjyVisible;
+        sjyEntities.forEach(e => { e.show = sjyVisible; });
+        sjyBtn.textContent = sjyVisible ? '三江源图层：开' : '三江源图层：关';
+        sjyBtn.classList.toggle('active', sjyVisible);
+        if (sjyVisible) {
+            flyToSjy();
+            showStatus('三江源图层已开启，正在飞向三江源地区', 3000);
+        } else {
+            showStatus('三江源图层已关闭', 2000);
+        }
+    }
+
+    sjyBtn.addEventListener('click', toggleSjyLayer);
+    buildSjyLayer();
+    console.log('✅ 三江源地区图层加载完成');
+
+    console.log('✅ 三维地形互动底图初始化完成');
+    </script>
+</body>
+</html>
