@@ -1,0 +1,1419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>三维地形互动地图</title>
+
+    <!-- ============================================================
+         一、全局样式
+         ============================================================ -->
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        #cesiumContainer { width: 100%; height: 100%; }
+
+        /* ---------- 顶部按钮栏 ---------- */
+        .topBtn {
+            position: absolute; top: 20px; z-index: 999;
+            padding: 10px 18px; font-size: 14px; cursor: pointer;
+            background: rgba(20, 30, 40, 0.88); color: #4fc3f7;
+            border: 1px solid #4fc3f7; border-radius: 4px;
+            font-family: "Microsoft YaHei", sans-serif; font-weight: 600;
+            transition: all 0.2s;
+        }
+        .topBtn:hover { background: rgba(79, 195, 247, 0.2); }
+        .topBtn.active { background: #ff5252; color: #fff; border-color: #ff5252; }
+
+        #markBtn { left: 20px; }
+        #profileBtn { left: 160px; }
+
+        /* ---------- 搜索面板 ---------- */
+        #searchPanel {
+            position: absolute; top: 20px; left: 300px; z-index: 999;
+            display: flex; gap: 8px; font-family: "Microsoft YaHei", sans-serif;
+        }
+        #searchInput {
+            width: 220px; padding: 10px 14px; font-size: 14px;
+            border: 1px solid #4fc3f7; border-radius: 4px;
+            background: rgba(20, 30, 40, 0.88); color: #fff; outline: none;
+        }
+        #searchInput::placeholder { color: #aaa; }
+        #searchBtn {
+            padding: 10px 18px; font-size: 14px; cursor: pointer;
+            background: #4fc3f7; color: #0a1929; border: none;
+            border-radius: 4px; font-weight: 600;
+        }
+        #searchBtn:hover { background: #81d4fa; }
+        #searchBtn:disabled { background: #555; color: #999; cursor: not-allowed; }
+
+        /* ---------- 搜索结果列表 ---------- */
+        #resultList {
+            position: absolute; top: 62px; left: 300px; width: 320px;
+            max-height: 300px; overflow-y: auto;
+            background: rgba(20, 30, 40, 0.95);
+            border: 1px solid #4fc3f7; border-radius: 0 0 6px 6px;
+            z-index: 1000; display: none;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+        #resultList .result-item {
+            padding: 10px 14px; color: #ddd; font-size: 13px;
+            cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.08);
+            line-height: 1.5;
+        }
+        #resultList .result-item:hover { background: rgba(79, 195, 247, 0.2); }
+        #resultList .result-item .item-name { color: #4fc3f7; font-weight: 600; }
+        #resultList .result-item .item-addr { color: #999; font-size: 12px; }
+
+        /* ---------- 剖面图面板 ---------- */
+        #profilePanel {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            height: 220px; background: rgba(10, 20, 30, 0.95);
+            border-top: 2px solid #4fc3f7; z-index: 998;
+            display: none; font-family: "Microsoft YaHei", sans-serif;
+        }
+        #profilePanel.visible { display: block; }
+        #profileHeader {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 20px; border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        #profileHeader .title { color: #4fc3f7; font-size: 14px; font-weight: 600; }
+        #profileHeader .actions { display: flex; gap: 8px; }
+        #profileHeader button {
+            padding: 4px 12px; font-size: 12px; cursor: pointer;
+            background: transparent; color: #4fc3f7;
+            border: 1px solid #4fc3f7; border-radius: 3px;
+        }
+        #profileHeader button:hover { background: rgba(79,195,247,0.2); }
+        #profileCanvas { display: block; width: 100%; height: 170px; }
+
+        /* ---------- 状态提示 ---------- */
+        #statusMsg {
+            position: absolute; bottom: 240px; left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8); color: #ddd;
+            padding: 10px 24px; border-radius: 20px;
+            font-size: 13px; font-family: "Microsoft YaHei", sans-serif;
+            display: none; z-index: 1001; white-space: nowrap;
+        }
+
+        /* ============================================================
+           二、右侧导航 / 工具条样式（对应截图）
+           ============================================================ */
+        #navPanel {
+            position: absolute; top: 20px; right: 20px; z-index: 999;
+            display: flex; flex-direction: column; align-items: center;
+            gap: 16px; font-family: "Microsoft YaHei", sans-serif;
+            user-select: none;
+        }
+
+        /* ---- 指北针 ---- */
+        #compass {
+            width: 76px; height: 76px; border-radius: 50%;
+            background: rgba(20, 30, 40, 0.72);
+            border: 1px solid rgba(255,255,255,0.22);
+            box-shadow: 0 0 12px rgba(0,0,0,0.55);
+            display: flex; align-items: center; justify-content: center;
+            cursor: grab;
+            touch-action: none; /* 防止触摸滚动干扰拖拽 */
+        }
+        /* ---- 轮盘交互反馈（悬停高亮 / 拖动状态） ---- */
+        #compass { transition: border-color 0.18s, box-shadow 0.18s; }
+        #compass:hover {
+            border-color: rgba(79, 195, 247, 0.7);
+            box-shadow: 0 0 16px rgba(79, 195, 247, 0.35);
+        }
+        #compass.dragging {
+            cursor: grabbing;
+            border-color: #4fc3f7;
+            box-shadow: 0 0 16px rgba(79, 195, 247, 0.5);
+        }
+        #compass svg { width: 100%; height: 100%; pointer-events: none; }
+
+        /* ---- 拖动轮盘时显示的方位 / 俯仰读数 ---- */
+        #compassReadout {
+            position: absolute; top: 25px; right: 88px;
+            padding: 5px 10px; border-radius: 4px;
+            background: rgba(10, 20, 30, 0.9);
+            border: 1px solid rgba(79, 195, 247, 0.45);
+            color: #9fe3ff; font-size: 12px; line-height: 1.4;
+            white-space: nowrap; pointer-events: none;
+            opacity: 0; transform: translateX(6px);
+            transition: opacity 0.15s ease, transform 0.15s ease;
+        }
+        #compassReadout.show { opacity: 1; transform: translateX(0); }
+
+        /* ---- 按钮组 ---- */
+        .toolGroup {
+            display: flex; flex-direction: column;
+            background: rgba(20, 30, 40, 0.85);
+            border: 1px solid rgba(255,255,255,0.22);
+            border-radius: 5px; overflow: hidden;
+            box-shadow: 0 0 12px rgba(0,0,0,0.55);
+        }
+        .toolGroup button {
+            width: 48px; height: 48px;
+            display: flex; align-items: center; justify-content: center;
+            background: transparent; color: #ffffff;
+            border: none; border-bottom: 1px solid rgba(255,255,255,0.14);
+            font-size: 22px; line-height: 1; cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+        }
+        .toolGroup button:last-child { border-bottom: none; }
+        .toolGroup button:hover { background: rgba(79, 195, 247, 0.22); color: #4fc3f7; }
+        .toolGroup button.active { background: rgba(255, 82, 82, 0.88); color: #fff; }
+        .toolGroup button svg { width: 22px; height: 22px; }
+    </style>
+
+    <link rel="stylesheet"
+          href="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Widgets/widgets.css">
+</head>
+<body>
+
+<!-- ============================================================
+     三、页面结构
+     ============================================================ -->
+<div id="cesiumContainer"></div>
+
+<!-- 顶部功能按钮 -->
+<button id="markBtn" class="topBtn">标记模式：关</button>
+<button id="profileBtn" class="topBtn">剖面图模式：关</button>
+
+<!-- 搜索面板 -->
+<div id="searchPanel">
+    <input id="searchInput" type="text" placeholder="搜索地名，如：北京、广州" />
+    <button id="searchBtn">搜索</button>
+</div>
+<div id="resultList"></div>
+
+<!-- 右侧导航工具条（指北针 + 缩放 + 量算） -->
+<div id="navPanel">
+
+    <!-- 指北针 / 视角轮盘：左键拖动旋转方位，中键拖动调整俯仰与方位 -->
+    <div id="compass" title="拖动轮盘旋转方位　中键拖动调整俯仰与方位">
+        <svg viewBox="0 0 100 100">
+            <!-- 外圈刻度 -->
+            <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1.5"/>
+            <circle cx="50" cy="50" r="33" fill="none" stroke="rgba(255,255,255,0.16)" stroke-width="1"/>
+            <g stroke="rgba(255,255,255,0.35)" stroke-width="1.5">
+                <line x1="50" y1="5"  x2="50" y2="15"/>
+                <line x1="50" y1="85" x2="50" y2="95"/>
+                <line x1="5"  y1="50" x2="15" y2="50"/>
+                <line x1="85" y1="50" x2="95" y2="50"/>
+            </g>
+            <!-- 可旋转的指针（N 字 + 指针） -->
+            <g id="compassArrow">
+                <path d="M50 22 L57 46 L50 40 L43 46 Z" fill="#ff5252"/>
+                <path d="M50 78 L43 54 L50 60 L57 54 Z" fill="#b0bec5"/>
+                <text x="50" y="17" text-anchor="middle"
+                      font-size="12" font-weight="700" fill="#ffffff"
+                      font-family="Microsoft YaHei, sans-serif">N</text>
+            </g>
+        </svg>
+    </div>
+
+    <!-- 拖动轮盘时显示的方位 / 俯仰读数 -->
+    <div id="compassReadout">方位 0°　俯仰 -90°</div>
+
+    <!-- 缩放 / 归位按钮组 -->
+    <div class="toolGroup">
+        <button id="zoomInBtn"  title="放大">+</button>
+        <button id="homeBtn"    title="重置归位（俯瞰中国）">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 12a8 8 0 1 1 2.6 5.9"/>
+                <path d="M4 5.5V12h6.5"/>
+            </svg>
+        </button>
+        <button id="zoomOutBtn" title="缩小">−</button>
+    </div>
+
+    <!-- 量算工具组 -->
+    <div class="toolGroup">
+        <button id="distanceBtn" title="距离量算">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.6" stroke-linejoin="round">
+                <path d="M3.2 17.6 L17.6 3.2 L20.8 6.4 L6.4 20.8 Z"/>
+                <path d="M7.6 13.2 L9.4 15 M10.8 10 L12.6 11.8 M14 6.8 L15.8 8.6"/>
+            </svg>
+        </button>
+        <button id="areaBtn" title="面积量算">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.6" stroke-linejoin="round">
+                <path d="M4 7.5 L10 3.5 L19.5 5.5 L20.5 15 L14 20.5 L5 17.5 Z"/>
+                <path d="M4 7.5 L19.5 5.5 M5 17.5 L20.5 15 M10 3.5 L14 20.5" stroke-opacity="0.55"/>
+            </svg>
+        </button>
+        <button id="clearMeasureBtn" title="清除量算">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 7h16"/>
+                <path d="M9.5 7V4.5h5V7"/>
+                <path d="M6.5 7l1 13h9l1-13"/>
+                <path d="M10.5 10.5v6 M13.5 10.5v6"/>
+            </svg>
+        </button>
+    </div>
+</div>
+
+<!-- 剖面图面板 -->
+<div id="profilePanel">
+    <div id="profileHeader">
+        <span class="title" id="profileTitle">地形剖面图</span>
+        <div class="actions">
+            <button id="profileClearBtn">清除剖面</button>
+            <button id="profileCloseBtn">关闭面板</button>
+        </div>
+    </div>
+    <canvas id="profileCanvas"></canvas>
+</div>
+
+<!-- 状态提示 -->
+<div id="statusMsg"></div>
+
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Cesium.js"></script>
+
+<script>
+/* ============================================================
+ * 四、全局配置区
+ * ============================================================ */
+const TIANDITU_KEY = '67202ad0231a8193b8cdda3816077687';//天地图密钥
+const CESIUM_ION_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6IjlVZENLWEkzMklfRERnOEUiLCJqdGkiOiI4ZTNiNjM4OC03NGQ0LTQxYTYtYmU1OS03NzY2YWI3MTM0ODIiLCJpZCI6NDkyNTMzLCJzdWIiOiJXaGl0ZUJyaWNoIiwiaXNzIjoiaHR0cHM6Ly9hcGkuY2VzaXVtLmNvbSIsImF1ZCI6IldoaXRlQnJpY2hfZGVmYXVsdCIsImlhdCI6MTc4OTU1OTQ3MH0.9UqNi6F0cDZkv9bQze3iZZqmrtQFDB6ERuspXtnVqLQ';//Cesium密钥
+const subdomains = ['0','1','2','3','4','5','6','7'];
+
+Cesium.Ion.defaultAccessToken = CESIUM_ION_TOKEN;
+
+/* ---------- 中国范围（初始化视角 / 重置归位） ---------- */
+const CHINA_RECTANGLE = Cesium.Rectangle.fromDegrees(73.0, 3.0, 136.0, 54.0);
+
+/* ---------- 相机高度限制（防止穿越地形） ---------- */
+const MIN_CAMERA_HEIGHT = 800;        // 相机最低高度（米）
+const MAX_CAMERA_HEIGHT = 20000000;   // 相机最高高度（米）
+const ZOOM_BUTTON_STEP = 1.7;         // 按钮每次缩放倍率
+const ZOOM_WHEEL_SCALE = 0.45;        // 滚轮缩放灵敏度（越小越慢）
+
+/* 供剖面图采样使用的地形对象 */
+let globalTerrainProvider = null;
+
+
+/* ============================================================
+ * 五、初始化 Viewer（含相机控制参数）
+ * ============================================================ */
+const viewer = new Cesium.Viewer('cesiumContainer', {
+    baseLayerPicker: false,
+    geocoder: false,
+    homeButton: false,          // 使用自定义的“重置归位”按钮
+    sceneModePicker: false,
+    navigationHelpButton: false,
+    animation: false,
+    timeline: false,
+    fullscreenButton: true,
+    infoBox: false,
+    selectionIndicator: false,
+    baseLayer: false
+});
+
+viewer.cesiumWidget.creditContainer.style.display = 'none';
+
+/* 关闭海面特效（动态波浪 / 镜面反光） */
+viewer.scene.globe.showWaterEffect = false;
+
+/* ---------- 请求限流：缓解 429 Too Many Requests ---------- */
+Cesium.RequestScheduler.maximumRequests = 20;
+Cesium.RequestScheduler.maximumRequestsPerServer = 10;
+
+/* ---------- 相机控制器参数：缩放速度 / 缩放范围 / 防穿地 ---------- */
+(function setupCameraController() {
+    const ssc = viewer.scene.screenSpaceCameraController;
+
+    // 限制相机与地表的最近 / 最远距离，避免镜头钻进地面
+    ssc.minimumZoomDistance = 300;              // 最近 300 米
+    ssc.maximumZoomDistance = MAX_CAMERA_HEIGHT;
+
+    // 开启碰撞检测，倾斜视角时相机不会钻入山体
+    ssc.enableCollisionDetection = true;
+
+    // 降低惯性，缩放更“跟手”
+    ssc.inertiaZoom = 0.45;
+
+    // 降低滚轮缩放灵敏度（包装底层 zoomIn / zoomOut）
+    if (typeof ssc.zoomIn === 'function' && typeof ssc.zoomOut === 'function') {
+        const originalZoomIn  = ssc.zoomIn.bind(ssc);
+        const originalZoomOut = ssc.zoomOut.bind(ssc);
+        ssc.zoomIn  = function (amount) { originalZoomIn(amount * ZOOM_WHEEL_SCALE); };
+        ssc.zoomOut = function (amount) { originalZoomOut(amount * ZOOM_WHEEL_SCALE); };
+    }
+})();
+
+
+/* ============================================================
+ * 六、加载 Cesium 官方世界地形
+ * ============================================================ */
+async function initTerrain() {
+    try {
+        const terrainProvider = await Cesium.createWorldTerrainAsync({
+            requestVertexNormals: true,
+            requestWaterMask: false        // 不再请求水面掩膜 → 海面无波浪 / 反光特效
+        });
+        viewer.terrainProvider = terrainProvider;
+        viewer.scene.globe.depthTestAgainstTerrain = true;
+        viewer.scene.globe.showWaterEffect = false;   // 双保险：显式关闭海面特效
+        globalTerrainProvider = terrainProvider;
+        console.log('✅ Cesium 官方世界地形加载成功（海面特效已关闭，影像图层保留）');
+    } catch (error) {
+        console.error('❌ 地形加载失败，回退到椭球地形：', error);
+        viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+        viewer.scene.globe.depthTestAgainstTerrain = false;
+    }
+}
+initTerrain();
+
+
+/* ============================================================
+ * 七、天地图影像底图 + 注记
+ * ============================================================ */
+viewer.imageryLayers.addImageryProvider(
+    new Cesium.WebMapTileServiceImageryProvider({
+        url: `https://t{s}.tianditu.gov.cn/img_w/wmts?tk=${TIANDITU_KEY}`,
+        layer: 'img', style: 'default', format: 'tiles',
+        tileMatrixSetID: 'w', subdomains, maximumLevel: 18
+    })
+);
+viewer.imageryLayers.addImageryProvider(
+    new Cesium.WebMapTileServiceImageryProvider({
+        url: `https://t{s}.tianditu.gov.cn/cia_w/wmts?tk=${TIANDITU_KEY}`,
+        layer: 'cia', style: 'default', format: 'tiles',
+        tileMatrixSetID: 'w', subdomains, maximumLevel: 18
+    })
+);
+
+
+/* ============================================================
+ * 八、初始视角：俯瞰中国全境
+ * ============================================================ */
+viewer.camera.setView({
+    destination: CHINA_RECTANGLE
+});
+
+/* 视角复位函数：飞到中国全境 */
+function resetToChina(duration = 1.6) {
+    viewer.camera.flyTo({
+        destination: CHINA_RECTANGLE,
+        duration: duration,
+        complete: () => showStatus('已重置为中国全境视角', 2000)
+    });
+}
+
+
+/* ============================================================
+ * 九、通用工具：状态提示
+ * ============================================================ */
+const statusMsg = document.getElementById('statusMsg');
+
+function showStatus(msg, duration = 3000) {
+    statusMsg.textContent = msg;
+    statusMsg.style.display = 'block';
+    if (duration > 0) {
+        setTimeout(() => { statusMsg.style.display = 'none'; }, duration);
+    }
+}
+
+
+/* ============================================================
+ * 十、右侧工具条 ①：指北针轮盘（可拖动调整相机视角）
+ *     · 左键拖动：旋转方位角
+ *     · 中键拖动：同时调整方位角与俯仰角
+ * ============================================================ */
+const compassEl      = document.getElementById('compass');
+const compassArrow   = document.getElementById('compassArrow');
+const compassReadout = document.getElementById('compassReadout');
+
+/* ---------- 指针始终指向地理正北 ---------- */
+viewer.scene.postRender.addEventListener(function () {
+    // 相机朝东时，北方向在屏幕左侧 → 指针反向旋转
+    const deg = -Cesium.Math.toDegrees(viewer.camera.heading);
+    compassArrow.setAttribute('transform', `rotate(${deg.toFixed(2)} 50 50)`);
+});
+
+/* ---------- 拖动参数 ---------- */
+const COMPASS_SENSITIVITY = 0.006;                     // 每像素旋转的弧度（约 0.34°）
+const COMPASS_PITCH_MAX = Cesium.Math.toRadians(-8);   // 最高俯仰：接近水平，避免镜头贴地
+const COMPASS_PITCH_MIN = -Math.PI / 2;                // 最低俯仰：垂直俯视
+
+let compassDrag = null;
+let compassReadoutTimer = null;
+
+/* 取屏幕中心对应的地表点作为环绕轴心（取不到时返回 undefined） */
+function getCompassPivot() {
+    const scene  = viewer.scene;
+    const canvas = scene.canvas;
+    const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+
+    const ray = viewer.camera.getPickRay(center);
+    if (ray) {
+        const picked = scene.globe.pick(ray, scene);
+        if (picked) return picked;
+    }
+    return viewer.camera.pickEllipsoid(center, scene.globe.ellipsoid);
+}
+
+/* ---------- 方位 / 俯仰读数 ---------- */
+function updateCompassReadout(heading, pitch) {
+    if (!compassReadout) return;
+
+    let deg = Cesium.Math.toDegrees(heading) % 360;
+    if (deg < 0) deg += 360;
+
+    compassReadout.textContent =
+        `方位 ${deg.toFixed(0)}°　俯仰 ${Cesium.Math.toDegrees(pitch).toFixed(0)}°`;
+    compassReadout.classList.add('show');
+}
+
+function hideCompassReadout(delay) {
+    if (!compassReadout) return;
+    clearTimeout(compassReadoutTimer);
+    compassReadoutTimer = setTimeout(function () {
+        if (!compassDrag) compassReadout.classList.remove('show');
+    }, delay);
+}
+
+/* ---------- 应用新视角：绕屏幕中心的地表点旋转相机 ---------- */
+function applyCompassView(drag, heading, pitch) {
+    const camera = viewer.camera;
+
+    // 限制俯仰范围，防止镜头翻转 / 贴地
+    pitch = Math.min(COMPASS_PITCH_MAX, Math.max(COMPASS_PITCH_MIN, pitch));
+
+    if (drag.pivot) {
+        camera.lookAt(
+            drag.pivot,
+            new Cesium.HeadingPitchRange(heading, pitch, drag.range)
+        );
+        // 立即恢复世界坐标系，避免影响后续 flyTo / setView
+        camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    } else {
+        // 屏幕中心没有地表（例如正对天空）：原地转动相机
+        camera.setView({
+            destination: Cesium.Cartesian3.clone(camera.positionWC),
+            orientation: { heading: heading, pitch: pitch, roll: 0 }
+        });
+    }
+
+    updateCompassReadout(heading, pitch);
+}
+
+/* ---------- 拖动开始 ---------- */
+function startCompassDrag(e) {
+    // 只响应左键与中键
+    if (e.button !== 0 && e.button !== 1) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    // 打断正在进行的飞行，避免拖拽与飞行动画冲突
+    viewer.camera.cancelFlight();
+
+    const pivot = getCompassPivot();
+
+    compassDrag = {
+        pointerId:    e.pointerId,
+        button:       e.button,
+        startX:       e.clientX,
+        startY:       e.clientY,
+        startHeading: viewer.camera.heading,
+        startPitch:   viewer.camera.pitch,
+        pivot:        pivot,
+        range:        pivot
+            ? Math.max(Cesium.Cartesian3.distance(viewer.camera.positionWC, pivot), 50)
+            : 0
+    };
+
+    compassEl.classList.add('dragging');
+    clearTimeout(compassReadoutTimer);
+    updateCompassReadout(compassDrag.startHeading, compassDrag.startPitch);
+
+    if (compassEl.setPointerCapture) {
+        try { compassEl.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+    }
+}
+
+/* ---------- 拖动过程 ---------- */
+function onCompassDragMove(e) {
+    if (!compassDrag || e.pointerId !== compassDrag.pointerId) return;
+    e.preventDefault();
+
+    const dx = e.clientX - compassDrag.startX;
+    const dy = e.clientY - compassDrag.startY;
+
+    // 水平拖动：轮盘跟随鼠标方向转动（场景同步旋转）
+    const heading = compassDrag.startHeading - dx * COMPASS_SENSITIVITY;
+
+    // 中键额外控制俯仰：向下拖 → 视角抬向地平线；向上拖 → 更接近垂直俯视
+    let pitch = compassDrag.startPitch;
+    if (compassDrag.button === 1) {
+        pitch += dy * COMPASS_SENSITIVITY;
+    }
+
+    applyCompassView(compassDrag, heading, pitch);
+}
+
+/* ---------- 拖动结束 ---------- */
+function endCompassDrag(e) {
+    if (!compassDrag) return;
+    if (e && e.pointerId !== undefined && e.pointerId !== compassDrag.pointerId) return;
+
+    if (compassEl.releasePointerCapture) {
+        try { compassEl.releasePointerCapture(compassDrag.pointerId); } catch (err) { /* 忽略 */ }
+    }
+
+    compassDrag = null;
+    compassEl.classList.remove('dragging');
+    hideCompassReadout(1200);
+}
+
+compassEl.addEventListener('pointerdown', startCompassDrag);
+window.addEventListener('pointermove', onCompassDragMove, { passive: false });
+window.addEventListener('pointerup', endCompassDrag);
+window.addEventListener('pointercancel', endCompassDrag);
+window.addEventListener('blur', function () { endCompassDrag(); });
+
+// 屏蔽中键默认行为（自动滚动等），避免拖动时浏览器介入
+compassEl.addEventListener('mousedown', function (e) {
+    if (e.button === 1) e.preventDefault();
+});
+compassEl.addEventListener('auxclick', function (e) {
+    if (e.button === 1) e.preventDefault();
+});
+
+
+/* ============================================================
+ * 十一、右侧工具条 ②：按钮式放大 / 缩小 / 重置归位
+ * ============================================================ */
+
+/* 取得当前位置允许的最低相机高度（地形高度 + 安全余量） */
+function getMinAllowedHeight(lonRad, latRad) {
+    let ground = 0;
+    try {
+        const h = viewer.scene.globe.getHeight(Cesium.Cartographic.fromRadians(lonRad, latRad));
+        if (typeof h === 'number') ground = h;
+    } catch (e) { /* 忽略取高失败 */ }
+    return Math.max(ground + 300, MIN_CAMERA_HEIGHT);
+}
+
+/* 按倍率垂直升降相机：保持经纬度与姿态，只改高度 */
+function zoomByStep(isZoomOut) {
+    const camera = viewer.camera;
+    const carto = Cesium.Cartographic.fromCartesian(camera.positionWC);
+    if (!carto) return;
+
+    const currentH = carto.height;
+    let targetH = isZoomOut
+        ? currentH * ZOOM_BUTTON_STEP
+        : currentH / ZOOM_BUTTON_STEP;
+
+    // 上限：防止拉得太远；下限：防止钻进地形
+    targetH = Math.min(targetH, MAX_CAMERA_HEIGHT);
+    targetH = Math.max(targetH, getMinAllowedHeight(carto.longitude, carto.latitude));
+
+    if (Math.abs(targetH - currentH) < 1) return;
+
+    const destination = Cesium.Cartesian3.fromRadians(
+        carto.longitude, carto.latitude, targetH
+    );
+
+    camera.flyTo({
+        destination: destination,
+        orientation: {
+            heading: camera.heading,
+            pitch: camera.pitch,
+            roll: 0
+        },
+        duration: 0.5
+    });
+}
+
+document.getElementById('zoomInBtn').addEventListener('click', () => zoomByStep(false));
+document.getElementById('zoomOutBtn').addEventListener('click', () => zoomByStep(true));
+document.getElementById('homeBtn').addEventListener('click', () => resetToChina(1.6));
+
+
+/* ============================================================
+ * 十二、搜索功能
+ * ============================================================ */
+const searchInput = document.getElementById('searchInput');
+const searchBtn   = document.getElementById('searchBtn');
+const resultList  = document.getElementById('resultList');
+
+let searchMarker = null;
+
+function hideResultList() {
+    resultList.style.display = 'none';
+    resultList.innerHTML = '';
+}
+
+async function searchAdministrative(keyword) {
+    const url = `https://api.tianditu.gov.cn/v2/administrative?keyword=${encodeURIComponent(keyword)}&childLevel=0&extensions=false&tk=${TIANDITU_KEY}`;
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        const ok = data.status === 200 || data.status === 0 || data.status?.infocode === 0;
+        if (ok && data.data?.district?.length > 0) {
+            return data.data.district.map(item => ({
+                name: item.name,
+                lonlat: `${item.center.lng},${item.center.lat}`,
+                address: `行政区划（${item.gb || ''}）`,
+                isAdmin: true
+            }));
+        }
+    } catch (err) { console.warn('行政区划搜索失败：', err); }
+    return [];
+}
+
+async function searchPOI(keyword) {
+    const postStr = {
+        keyWord: keyword, level: 12, mapBound: '-180,-90,180,90',
+        queryType: 1, start: 0, count: 10
+    };
+    const url = `https://api.tianditu.gov.cn/v2/search?postStr=${encodeURIComponent(JSON.stringify(postStr))}&type=query&tk=${TIANDITU_KEY}`;
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        const statusCode = data.status?.infocode || data.status;
+        if (statusCode !== 0 && statusCode !== '0' && statusCode !== 1000) return [];
+        const pois = data.pois || data.result || [];
+        return pois.map(item => {
+            let lon = 0, lat = 0;
+            if (item.lonlat) {
+                const parts = item.lonlat.split(',');
+                lon = parseFloat(parts[0]); lat = parseFloat(parts[1]);
+            }
+            return {
+                name: item.name || item.keyword || '未知地点',
+                lonlat: `${lon},${lat}`,
+                address: item.address || '',
+                isAdmin: false
+            };
+        });
+    } catch (err) { console.warn('POI搜索失败：', err); return []; }
+}
+
+async function doSearch() {
+    const keyword = searchInput.value.trim();
+    if (!keyword) { showStatus('请输入搜索关键词'); return; }
+
+    searchBtn.disabled = true;
+    searchBtn.textContent = '搜索中...';
+    hideResultList();
+    showStatus('正在搜索...', 0);
+
+    let results = await searchAdministrative(keyword);
+    if (results.length === 0) results = await searchPOI(keyword);
+
+    if (results.length === 0) {
+        showStatus('未找到相关地点，请尝试其他关键词');
+        searchBtn.disabled = false;
+        searchBtn.textContent = '搜索';
+        return;
+    }
+
+    renderResults(results);
+    showStatus(`找到 ${results.length} 个结果，点击条目跳转`);
+    searchBtn.disabled = false;
+    searchBtn.textContent = '搜索';
+}
+
+function renderResults(results) {
+    resultList.innerHTML = '';
+    results.forEach((item, index) => {
+        const div = document.createElement('div');
+        div.className = 'result-item';
+        const [lon, lat] = item.lonlat.split(',').map(Number);
+        const tag = item.isAdmin ? '【行政区划】' : '';
+        div.innerHTML = `
+            <div class="item-name">${index + 1}. ${tag}${item.name}</div>
+            <div class="item-addr">${item.address || `经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°`}</div>
+        `;
+        div.addEventListener('click', () => {
+            flyToLocation(lon, lat, item.name, item.isAdmin);
+            hideResultList();
+            searchInput.value = item.name;
+        });
+        resultList.appendChild(div);
+    });
+    resultList.style.display = 'block';
+}
+
+function flyToLocation(lon, lat, name, isAdmin) {
+    if (searchMarker) { viewer.entities.remove(searchMarker); searchMarker = null; }
+    searchMarker = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(lon, lat),
+        point: {
+            pixelSize: 12, color: Cesium.Color.RED,
+            outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY
+        },
+        label: {
+            text: name, font: 'bold 14px "Microsoft YaHei", sans-serif',
+            fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            pixelOffset: new Cesium.Cartesian2(0, -24),
+            eyeOffset: new Cesium.Cartesian3(0, 0, -50000)
+        }
+    });
+    const height = isAdmin ? 200000 : 8000;
+    viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+        orientation: {
+            heading: Cesium.Math.toRadians(0),
+            pitch: Cesium.Math.toRadians(isAdmin ? -60 : -65),
+            roll: 0
+        },
+        duration: 5,
+        complete: () => showStatus(`已定位到：${name}`, 2000)
+    });
+}
+
+searchBtn.addEventListener('click', doSearch);
+searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+document.addEventListener('click', e => {
+    const panel = document.getElementById('searchPanel');
+    const list = document.getElementById('resultList');
+    if (!panel.contains(e.target) && !list.contains(e.target)) hideResultList();
+});
+
+
+/* ============================================================
+ * 十三、标记模式
+ * ============================================================ */
+const markBtn = document.getElementById('markBtn');
+let markMode = false;
+let userMarkers = [];
+
+function toggleMarkMode() {
+    const next = !markMode;
+
+    // 开启标记时，关闭其它模式
+    if (next) {
+        if (profileMode) toggleProfileMode();
+        if (measureMode) setMeasureMode(null);
+    }
+
+    markMode = next;
+    markBtn.textContent = markMode ? '标记模式：开' : '标记模式：关';
+    markBtn.classList.toggle('active', markMode);
+    viewer.scene.canvas.style.cursor = markMode ? 'crosshair' : 'default';
+
+    if (markMode) {
+        showStatus('标记模式已开启，点击地球放置标记', 3000);
+    } else {
+        userMarkers.forEach(m => viewer.entities.remove(m));
+        userMarkers = [];
+        showStatus('标记模式已关闭，所有标记已清除', 3000);
+    }
+}
+
+markBtn.addEventListener('click', toggleMarkMode);
+
+
+/* ============================================================
+ * 十四、剖面图模式
+ * ============================================================ */
+const profileBtn       = document.getElementById('profileBtn');
+const profilePanel     = document.getElementById('profilePanel');
+const profileCanvas    = document.getElementById('profileCanvas');
+const profileTitle     = document.getElementById('profileTitle');
+const profileClearBtn  = document.getElementById('profileClearBtn');
+const profileCloseBtn  = document.getElementById('profileCloseBtn');
+
+let profileMode = false;
+let profilePoints = [];        // 起点、终点经纬度
+let profileEntities = [];      // 线条、端点实体
+let profileRubberLine = null;  // 鼠标移动预览线
+
+function toggleProfileMode() {
+    const next = !profileMode;
+
+    if (next) {
+        if (markMode) toggleMarkMode();
+        if (measureMode) setMeasureMode(null);
+    }
+
+    profileMode = next;
+    profileBtn.textContent = profileMode ? '剖面图模式：开' : '剖面图模式：关';
+    profileBtn.classList.toggle('active', profileMode);
+    viewer.scene.canvas.style.cursor = profileMode ? 'crosshair' : 'default';
+
+    if (profileMode) {
+        profilePoints = [];
+        showStatus('剖面图模式已开启，点击地图选择起点', 3000);
+    } else {
+        clearProfile();
+        showStatus('剖面图模式已关闭', 2000);
+    }
+}
+
+function clearProfile() {
+    profilePoints = [];
+    profileEntities.forEach(e => viewer.entities.remove(e));
+    profileEntities = [];
+    if (profileRubberLine) {
+        viewer.entities.remove(profileRubberLine);
+        profileRubberLine = null;
+    }
+    profilePanel.classList.remove('visible');
+}
+
+profileBtn.addEventListener('click', toggleProfileMode);
+profileClearBtn.addEventListener('click', () => {
+    clearProfile();
+    if (profileMode) showStatus('已清除，请点击地图选择起点', 2000);
+});
+profileCloseBtn.addEventListener('click', () => {
+    clearProfile();
+    if (profileMode) toggleProfileMode();
+});
+
+/* ---------- 剖面图绘制核心 ---------- */
+function drawProfile(lon1, lat1, lon2, lat2, positions) {
+    profilePanel.classList.add('visible');
+
+    // 适配 canvas 分辨率
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = profileCanvas.clientWidth;
+    const cssH = profileCanvas.clientHeight;
+    profileCanvas.width = cssW * dpr;
+    profileCanvas.height = cssH * dpr;
+
+    const ctx = profileCanvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const W = cssW, H = cssH;
+    ctx.clearRect(0, 0, W, H);
+
+    // 距离计算
+    const geodesic = new Cesium.EllipsoidGeodesic(
+        Cesium.Cartographic.fromDegrees(lon1, lat1),
+        Cesium.Cartographic.fromDegrees(lon2, lat2)
+    );
+    const totalDistKm = geodesic.surfaceDistance / 1000;
+
+    // 海拔范围
+    const heights = positions.map(p => p.height);
+    const minH = Math.min(...heights);
+    const maxH = Math.max(...heights);
+    const rangeH = Math.max(maxH - minH, 1);
+
+    const padding = { top: 36, right: 30, bottom: 30, left: 60 };
+    const plotW = W - padding.left - padding.right;
+    const plotH = H - padding.top - padding.bottom;
+
+    const xOf = i => padding.left + (i / (positions.length - 1)) * plotW;
+    const yOf = h => padding.top + plotH - ((h - minH) / rangeH) * plotH;
+
+    // 背景网格
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 5; i++) {
+        const y = padding.top + (plotH * i / 5);
+        ctx.beginPath(); ctx.moveTo(padding.left, y); ctx.lineTo(padding.left + plotW, y); ctx.stroke();
+    }
+
+    // 填充区域（渐变）
+    ctx.beginPath();
+    ctx.moveTo(xOf(0), yOf(positions[0].height));
+    for (let i = 1; i < positions.length; i++) {
+        ctx.lineTo(xOf(i), yOf(positions[i].height));
+    }
+    ctx.lineTo(xOf(positions.length - 1), padding.top + plotH);
+    ctx.lineTo(xOf(0), padding.top + plotH);
+    ctx.closePath();
+    const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + plotH);
+    gradient.addColorStop(0, 'rgba(79, 195, 247, 0.75)');
+    gradient.addColorStop(1, 'rgba(79, 195, 247, 0.1)');
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // 轮廓线
+    ctx.beginPath();
+    ctx.moveTo(xOf(0), yOf(positions[0].height));
+    for (let i = 1; i < positions.length; i++) {
+        ctx.lineTo(xOf(i), yOf(positions[i].height));
+    }
+    ctx.strokeStyle = '#4fc3f7';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Y 轴刻度
+    ctx.fillStyle = '#aaa';
+    ctx.font = '11px "Microsoft YaHei"';
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= 5; i++) {
+        const h = minH + (rangeH * i / 5);
+        const y = yOf(h);
+        ctx.fillText(h.toFixed(0) + 'm', padding.left - 8, y + 4);
+    }
+
+    // X 轴刻度
+    ctx.textAlign = 'center';
+    for (let i = 0; i <= 5; i++) {
+        const d = totalDistKm * i / 5;
+        const x = padding.left + (plotW * i / 5);
+        ctx.fillText(d.toFixed(1) + 'km', x, padding.top + plotH + 18);
+    }
+
+    // 起点终点标记
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'left';
+    ctx.fillText('起点', xOf(0), padding.top - 10);
+    ctx.textAlign = 'right';
+    ctx.fillText('终点', xOf(positions.length - 1), padding.top - 10);
+
+    // 顶部统计信息
+    ctx.fillStyle = '#4fc3f7';
+    ctx.font = 'bold 13px "Microsoft YaHei"';
+    ctx.textAlign = 'left';
+    ctx.fillText(
+        `水平距离：${totalDistKm.toFixed(2)} km　|　海拔：${minH.toFixed(0)} ~ ${maxH.toFixed(0)} m　|　相对高差：${(maxH - minH).toFixed(0)} m`,
+        padding.left, 22
+    );
+
+    profileTitle.textContent = `地形剖面图  ${lat1.toFixed(2)}°N ${lon1.toFixed(2)}°E  →  ${lat2.toFixed(2)}°N ${lon2.toFixed(2)}°E`;
+}
+
+/* ---------- 采样并绘制 ---------- */
+async function sampleAndDrawProfile(lon1, lat1, lon2, lat2) {
+    showStatus('正在采样地形，请稍候...', 0);
+
+    const SAMPLE_COUNT = 100;
+    const cartographics = [];
+    for (let i = 0; i < SAMPLE_COUNT; i++) {
+        const t = i / (SAMPLE_COUNT - 1);
+        const lon = lon1 + (lon2 - lon1) * t;
+        const lat = lat1 + (lat2 - lat1) * t;
+        cartographics.push(Cesium.Cartographic.fromDegrees(lon, lat));
+    }
+
+    try {
+        let sampled;
+        if (globalTerrainProvider) {
+            sampled = await Cesium.sampleTerrainMostDetailed(
+                globalTerrainProvider,
+                cartographics
+            );
+        } else {
+            sampled = cartographics.map(c => { c.height = 0; return c; });
+            showStatus('提示：地形服务未加载，剖面图为平地', 4000);
+        }
+        drawProfile(lon1, lat1, lon2, lat2, sampled);
+        if (globalTerrainProvider) showStatus('剖面图已生成', 2000);
+    } catch (err) {
+        console.error('地形采样失败：', err);
+        showStatus('地形采样失败，请检查 Cesium ion Token', 4000);
+    }
+}
+
+
+/* ============================================================
+ * 十五、量算工具：距离量算 / 面积量算 / 清除
+ * ============================================================ */
+const distanceBtn     = document.getElementById('distanceBtn');
+const areaBtn         = document.getElementById('areaBtn');
+const clearMeasureBtn = document.getElementById('clearMeasureBtn');
+
+let measureMode = null;          // null | 'distance' | 'area'
+let measurePoints = [];          // 当前正在量算的顶点 [{lon, lat}]
+let measureEntities = [];        // 当前量算的图形实体
+let finishedEntities = [];       // 已结束量算的图形实体
+let measurePreviewEntity = null; // 鼠标移动时的预览线
+
+/* ---------- 数值计算辅助 ---------- */
+
+/* 折线总长（米），使用椭球测地线距离 */
+function calcTotalDistance(points) {
+    let total = 0;
+    for (let i = 1; i < points.length; i++) {
+        const g = new Cesium.EllipsoidGeodesic(
+            Cesium.Cartographic.fromDegrees(points[i - 1].lon, points[i - 1].lat),
+            Cesium.Cartographic.fromDegrees(points[i].lon, points[i].lat)
+        );
+        total += g.surfaceDistance;
+    }
+    return total;
+}
+
+/* 球面多边形面积（平方米） */
+function calcPolygonArea(points) {
+    if (points.length < 3) return 0;
+    const R = 6378137.0;
+    let sum = 0;
+    for (let i = 0; i < points.length; i++) {
+        const p1 = points[i];
+        const p2 = points[(i + 1) % points.length];
+        const lon1 = Cesium.Math.toRadians(p1.lon);
+        const lat1 = Cesium.Math.toRadians(p1.lat);
+        const lon2 = Cesium.Math.toRadians(p2.lon);
+        const lat2 = Cesium.Math.toRadians(p2.lat);
+        sum += (lon2 - lon1) * (2 + Math.sin(lat1) + Math.sin(lat2));
+    }
+    return Math.abs(sum * R * R / 2);
+}
+
+function formatDistance(m) {
+    return m >= 1000 ? (m / 1000).toFixed(3) + ' km' : m.toFixed(1) + ' m';
+}
+function formatArea(m2) {
+    return m2 >= 1e6 ? (m2 / 1e6).toFixed(4) + ' km²' : m2.toFixed(1) + ' m²';
+}
+
+/* ---------- 图形绘制 ---------- */
+function updateMeasureGraphics() {
+    // 清除上一轮绘制的图形
+    measureEntities.forEach(e => viewer.entities.remove(e));
+    measureEntities = [];
+    if (measurePreviewEntity) {
+        viewer.entities.remove(measurePreviewEntity);
+        measurePreviewEntity = null;
+    }
+
+    if (measurePoints.length === 0) return;
+
+    const cartesians = measurePoints.map(p => Cesium.Cartesian3.fromDegrees(p.lon, p.lat));
+
+    // 顶点小球
+    measurePoints.forEach(p => {
+        measureEntities.push(viewer.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(p.lon, p.lat),
+            point: {
+                pixelSize: 9,
+                color: Cesium.Color.YELLOW,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 1.5,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            }
+        }));
+    });
+
+    // 距离量算：折线
+    if (measureMode === 'distance' && measurePoints.length >= 2) {
+        measureEntities.push(viewer.entities.add({
+            polyline: {
+                positions: cartesians,
+                width: 3,
+                material: Cesium.Color.CYAN,
+                clampToGround: true
+            }
+        }));
+    }
+
+    // 面积量算：多边形 + 闭合边
+    if (measureMode === 'area' && measurePoints.length >= 2) {
+        const ring = cartesians.concat([cartesians[0]]);
+        measureEntities.push(viewer.entities.add({
+            polyline: {
+                positions: ring,
+                width: 2,
+                material: Cesium.Color.CYAN,
+                clampToGround: true
+            }
+        }));
+        if (measurePoints.length >= 3) {
+            measureEntities.push(viewer.entities.add({
+                polygon: {
+                    hierarchy: cartesians,
+                    material: Cesium.Color.CYAN.withAlpha(0.3),
+                    perPositionHeight: false
+                }
+            }));
+        }
+    }
+
+    // 结果标签（跟随最后一个顶点）
+    const last = measurePoints[measurePoints.length - 1];
+    let text = '点击继续取点';
+    if (measureMode === 'distance') {
+        text = measurePoints.length >= 2
+            ? '总长：' + formatDistance(calcTotalDistance(measurePoints))
+            : '起点';
+    } else {
+        text = measurePoints.length >= 3
+            ? '面积：' + formatArea(calcPolygonArea(measurePoints))
+            : '取点中（≥3点成面）';
+    }
+
+    measureEntities.push(viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(last.lon, last.lat),
+        label: {
+            text: text,
+            font: 'bold 14px "Microsoft YaHei", sans-serif',
+            fillColor: Cesium.Color.WHITE,
+            showBackground: true,
+            backgroundColor: new Cesium.Color(0.0, 0.0, 0.0, 0.75),
+            backgroundPadding: new Cesium.Cartesian2(8, 5),
+            pixelOffset: new Cesium.Cartesian2(0, -34),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY
+        }
+    }));
+}
+
+/* ---------- 添加顶点 ---------- */
+function addMeasurePoint(lon, lat) {
+    measurePoints.push({ lon, lat });
+    updateMeasureGraphics();
+
+    if (measureMode === 'distance' && measurePoints.length >= 2) {
+        showStatus('当前总长度：' + formatDistance(calcTotalDistance(measurePoints)) + '（右键结束本次量算）', 3000);
+    } else if (measureMode === 'area' && measurePoints.length >= 3) {
+        showStatus('当前面积：' + formatArea(calcPolygonArea(measurePoints)) + '（右键结束本次量算）', 3000);
+    }
+}
+
+/* ---------- 结束当前量算（保留图形） ---------- */
+function finishMeasure() {
+    if (measurePreviewEntity) {
+        viewer.entities.remove(measurePreviewEntity);
+        measurePreviewEntity = null;
+    }
+    if (measurePoints.length === 0) return;
+
+    finishedEntities = finishedEntities.concat(measureEntities);
+    measureEntities = [];
+    measurePoints = [];
+    showStatus('本次量算已结束，可继续点击开始新的量算', 2500);
+}
+
+/* ---------- 清除全部量算 ---------- */
+function clearAllMeasure() {
+    measureEntities.forEach(e => viewer.entities.remove(e));
+    measureEntities = [];
+    finishedEntities.forEach(e => viewer.entities.remove(e));
+    finishedEntities = [];
+    if (measurePreviewEntity) {
+        viewer.entities.remove(measurePreviewEntity);
+        measurePreviewEntity = null;
+    }
+    measurePoints = [];
+}
+
+/* ---------- 切换量算模式 ---------- */
+function setMeasureMode(mode) {
+    const nextMode = (measureMode === mode) ? null : mode;
+
+    // 开启量算时，先关闭标记 / 剖面模式
+    if (nextMode) {
+        if (markMode) toggleMarkMode();
+        if (profileMode) toggleProfileMode();
+    }
+
+    measureMode = nextMode;
+    clearAllMeasure();
+
+    distanceBtn.classList.toggle('active', measureMode === 'distance');
+    areaBtn.classList.toggle('active', measureMode === 'area');
+    viewer.scene.canvas.style.cursor = measureMode ? 'crosshair' : 'default';
+
+    if (measureMode === 'distance') {
+        showStatus('距离量算：单击地图依次取点，右键结束本次量算', 3500);
+    } else if (measureMode === 'area') {
+        showStatus('面积量算：单击地图依次取点（≥3 点成面），右键结束本次量算', 3500);
+    } else {
+        showStatus('已退出量算模式', 2000);
+    }
+}
+
+/* ---------- 鼠标移动时的量算预览线 ---------- */
+function updateMeasurePreview(endPosition) {
+    const ray = viewer.camera.getPickRay(endPosition);
+    if (!ray) return;
+    const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+    if (!cartesian) return;
+
+    const c = Cesium.Cartographic.fromCartesian(cartesian);
+    const lon = Cesium.Math.toDegrees(c.longitude);
+    const lat = Cesium.Math.toDegrees(c.latitude);
+    const last = measurePoints[measurePoints.length - 1];
+
+    if (measurePreviewEntity) viewer.entities.remove(measurePreviewEntity);
+
+    const arr = measurePoints.concat([{ lon, lat }]);
+    const flat = [];
+    arr.forEach(p => flat.push(p.lon, p.lat));
+
+    measurePreviewEntity = viewer.entities.add({
+        polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArray(flat),
+            width: 2,
+            material: new Cesium.PolylineDashMaterialProperty({
+                color: Cesium.Color.CYAN.withAlpha(0.85),
+                dashLength: 12
+            }),
+            clampToGround: true
+        }
+    });
+}
+
+/* ---------- 按钮事件 ---------- */
+distanceBtn.addEventListener('click', () => setMeasureMode('distance'));
+areaBtn.addEventListener('click', () => setMeasureMode('area'));
+clearMeasureBtn.addEventListener('click', () => {
+    clearAllMeasure();
+    showStatus('已清除全部量算结果', 2000);
+});
+
+
+/* ============================================================
+ * 十六、鼠标事件总入口：标记 / 剖面 / 量算 / 信息
+ * ============================================================ */
+const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+/* ---------- 左键单击 ---------- */
+handler.setInputAction(async function (click) {
+
+    const ray = viewer.camera.getPickRay(click.position);
+    if (!ray) return;
+
+    const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+    if (!cartesian) {
+        showStatus('未拾取到地表位置，请点击地球表面', 3000);
+        return;
+    }
+
+    const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+    const lon = Cesium.Math.toDegrees(cartographic.longitude);
+    const lat = Cesium.Math.toDegrees(cartographic.latitude);
+
+    /* ========== ① 量算模式（优先级最高） ========== */
+    if (measureMode) {
+        addMeasurePoint(lon, lat);
+        return;
+    }
+
+    /* ========== ② 剖面图模式 ========== */
+    if (profileMode) {
+        profilePoints.push({ lon, lat });
+
+        const pointEntity = viewer.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(lon, lat),
+            point: {
+                pixelSize: 10,
+                color: profilePoints.length === 1 ? Cesium.Color.LIME : Cesium.Color.ORANGE,
+                outlineColor: Cesium.Color.WHITE,
+                outlineWidth: 2,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            }
+        });
+        profileEntities.push(pointEntity);
+
+        if (profilePoints.length === 1) {
+            showStatus('起点已选，请点击终点位置', 3000);
+            return;
+        }
+
+        const p1 = profilePoints[0];
+        const p2 = profilePoints[1];
+
+        const lineEntity = viewer.entities.add({
+            polyline: {
+                positions: Cesium.Cartesian3.fromDegreesArray([p1.lon, p1.lat, p2.lon, p2.lat]),
+                width: 3,
+                material: Cesium.Color.YELLOW,
+                arcType: Cesium.ArcType.GEODESIC,
+                clampToGround: true
+            }
+        });
+        profileEntities.push(lineEntity);
+
+        if (profileRubberLine) {
+            viewer.entities.remove(profileRubberLine);
+            profileRubberLine = null;
+        }
+
+        await sampleAndDrawProfile(p1.lon, p1.lat, p2.lon, p2.lat);
+        profilePoints = [];
+        return;
+    }
+
+    /* ========== ③ 标记模式 ========== */
+    if (markMode) {
+        const idx = userMarkers.length + 1;
+        const marker = viewer.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(lon, lat),
+            point: {
+                pixelSize: 14, color: Cesium.Color.ORANGE,
+                outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            },
+            label: {
+                text: `标记 ${idx}`,
+                font: 'bold 14px "Microsoft YaHei", sans-serif',
+                fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                pixelOffset: new Cesium.Cartesian2(0, -24),
+                eyeOffset: new Cesium.Cartesian3(0, 0, -50000)
+            }
+        });
+        userMarkers.push(marker);
+        showStatus(`标记 ${idx}：经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°`, 3000);
+        return;
+    }
+
+    /* ========== ④ 普通信息模式 ========== */
+    showStatus(`经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　正在获取海拔...`, 0);
+    if (globalTerrainProvider) {
+        try {
+            const sampled = await Cesium.sampleTerrainMostDetailed(
+                globalTerrainProvider,
+                [Cesium.Cartographic.fromDegrees(lon, lat)]
+            );
+            showStatus(`经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　海拔 ${sampled[0].height.toFixed(1)} 米`, 4000);
+            return;
+        } catch (err) { console.warn('地形采样失败：', err); }
+    }
+    showStatus(`经度 ${lon.toFixed(4)}°　纬度 ${lat.toFixed(4)}°　海拔 ${cartographic.height.toFixed(1)} 米（近似）`, 4000);
+
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+/* ---------- 右键单击：结束当前量算 ---------- */
+handler.setInputAction(function () {
+    if (measureMode) finishMeasure();
+}, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
+
+/* ---------- 鼠标移动：剖面预览线 + 量算预览线 ---------- */
+handler.setInputAction(function (movement) {
+
+    // 剖面图预览线
+    if (profileMode && profilePoints.length === 1) {
+        const ray = viewer.camera.getPickRay(movement.endPosition);
+        if (ray) {
+            const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+            if (cartesian) {
+                const c = Cesium.Cartographic.fromCartesian(cartesian);
+                const lon = Cesium.Math.toDegrees(c.longitude);
+                const lat = Cesium.Math.toDegrees(c.latitude);
+                const p1 = profilePoints[0];
+
+                if (profileRubberLine) viewer.entities.remove(profileRubberLine);
+                profileRubberLine = viewer.entities.add({
+                    polyline: {
+                        positions: Cesium.Cartesian3.fromDegreesArray([p1.lon, p1.lat, lon, lat]),
+                        width: 2,
+                        material: new Cesium.PolylineDashMaterialProperty({
+                            color: Cesium.Color.YELLOW.withAlpha(0.7),
+                            dashLength: 12
+                        }),
+                        arcType: Cesium.ArcType.GEODESIC,
+                        clampToGround: true
+                    }
+                });
+            }
+        }
+    }
+
+    // 量算预览线
+    if (measureMode && measurePoints.length > 0) {
+        updateMeasurePreview(movement.endPosition);
+    }
+
+}, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+console.log('✅ 三维地形互动底图初始化完成');
+</script>
+</body>
+</html>

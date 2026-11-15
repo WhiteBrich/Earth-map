@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>互动式地图索引</title>
+
+<!-- ============================================================================
+     第一部分　样式表 <style>
+     功能：决定页面“长什么样”——底图怎么铺、卡片多大、文字什么颜色。
+     新手只需要修改下面 :root 里的变量（★ 标注处），其余规则保持不动即可。
+     ============================================================================ -->
+<style>
+  :root {
+    /* ★ 底图路径：默认读取 images/bg.jpg。
+         想换图，把新图片命名为 bg.jpg 覆盖掉 images 里的同名文件就行，代码不用改。
+         如果换的是 png，把下面的 .jpg 改成 .png 即可。 */
+    --bg-image: url("./images/bg.jpg");
+
+    /* ★ 底图上的深色遮罩：数字越大画面越暗、白色文字越清楚（范围 0 ~ 1） */
+    --overlay-top: rgba(7, 11, 24, 0.55);
+    --overlay-bottom: rgba(7, 11, 24, 0.85);
+
+    /* ★ 配色：想换整体风格，改这三行就够了 */
+    --accent: #6ea8fe;      /* 高亮色：搜索框聚焦、卡片描边 */
+    --text: #f2f5fb;        /* 主要文字颜色 */
+    --text-dim: #a8b3c6;    /* 次要文字颜色 */
+
+    /* 卡片的“玻璃”底色和描边，一般不用动 */
+    --card-bg: rgba(255, 255, 255, 0.07);
+    --card-border: rgba(255, 255, 255, 0.14);
+    --radius: 14px;
+  }
+
+  /* ---------- 1.1 基础设置：去掉浏览器默认边距 ---------- */
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.55;
+    color: var(--text);
+    background-color: #0b1020;          /* 图片万一没加载出来时的兜底色 */
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- 1.2 背景层：铺满窗口、滚动时固定不动的底图 ---------- */
+  .bg-layer {
+    position: fixed;                    /* 钉在屏幕上，页面滚动时底图不动 */
+    inset: 0;                           /* 上下左右全部贴边 */
+    z-index: -1;                        /* 压在所有内容下面 */
+    background-color: #0b1020;
+    background-image:
+      radial-gradient(900px 480px at 50% -12%, rgba(110, 168, 254, 0.20), transparent 62%),
+      linear-gradient(180deg, var(--overlay-top), var(--overlay-bottom)),
+      var(--bg-image);                  /* 真正的照片放在最底层 */
+    background-size: cover;             /* 等比放大铺满，多出来的部分裁掉 */
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+
+  /* ---------- 1.3 页面容器：居中的一列内容 ---------- */
+  .page {
+    width: min(1080px, calc(100% - 3rem));
+    margin: 0 auto;
+    padding: clamp(2.5rem, 7vw, 5.5rem) 0 3rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(2rem, 5vw, 3rem);
+  }
+
+  /* ---------- 1.4 顶部标题区 ---------- */
+  .hero { text-align: center; }
+  .hero-kicker {
+    margin: 0 0 0.8rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.35em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .hero h1 {
+    margin: 0;
+    font-size: clamp(2rem, 6vw, 3.2rem);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-shadow: 0 2px 28px rgba(0, 0, 0, 0.45);
+  }
+  .hero-sub {
+    margin: 0.9rem auto 0;
+    max-width: 36rem;
+    font-size: clamp(0.9rem, 2.2vw, 1rem);
+    color: var(--text-dim);
+  }
+
+  /* ---------- 1.5 搜索框 ---------- */
+  .search { position: relative; width: 100%; max-width: 620px; margin: 0 auto; }
+  .search-icon {
+    position: absolute; left: 17px; top: 50%; transform: translateY(-50%);
+    font-size: 0.95rem; opacity: 0.6; pointer-events: none;
+  }
+  #search-input {
+    width: 100%;
+    padding: 0.9rem 1.1rem 0.9rem 2.8rem;
+    font-family: inherit;
+    font-size: 0.95rem;
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--card-border);
+    border-radius: 999px;
+    outline: none;
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  }
+  #search-input::placeholder { color: rgba(233, 238, 248, 0.45); }
+  #search-input:focus {
+    border-color: rgba(110, 168, 254, 0.8);
+    background: rgba(255, 255, 255, 0.13);
+    box-shadow: 0 0 0 4px rgba(110, 168, 254, 0.16);
+  }
+
+  /* ---------- 1.6 分组与卡片网格 ---------- */
+  .groups { display: flex; flex-direction: column; gap: clamp(1.75rem, 4vw, 2.5rem); }
+  .group[hidden] { display: none; }
+
+  .group-title {
+    display: flex; align-items: center; gap: 0.8rem;
+    margin: 0 0 0.9rem;
+    font-size: 0.78rem; font-weight: 600;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .group-title::after {
+    content: "";
+    flex: 1; height: 1px;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.18), transparent);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0.85rem;
+  }
+
+  /* ---------- 1.7 单张网站卡片 ---------- */
+  .card {
+    display: flex; align-items: center; gap: 0.8rem;
+    padding: 0.85rem 1rem;
+    text-decoration: none;
+    color: inherit;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(110, 168, 254, 0.65);
+  }
+  .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .card[hidden] { display: none; }      /* 搜索过滤时，把不匹配的卡片藏起来 */
+
+  .card-icon {
+    flex: none;
+    display: grid; place-items: center;
+    width: 38px; height: 38px;
+    font-size: 1.15rem;
+    border-radius: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.05));
+  }
+  .card-body { display: flex; flex-direction: column; min-width: 0; }
+  .card-title {
+    font-size: 0.95rem; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .card-desc {
+    font-size: 0.78rem; color: var(--text-dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ---------- 1.8 搜索无结果时的提示 ---------- */
+  #empty-tip {
+    margin: 0;
+    padding: 1.5rem 0;
+    text-align: center;
+    font-size: 0.92rem;
+    color: var(--text-dim);
+  }
+  #empty-tip[hidden] { display: none; }
+
+  /* ---------- 1.9 页脚 ---------- */
+  .footer {
+    margin-top: 0.5rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    text-align: center;
+    font-size: 0.78rem;
+    color: rgba(200, 210, 228, 0.55);
+  }
+  .footer p { margin: 0.3rem 0; }
+  .footer kbd {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    font-family: inherit; font-size: 0.72rem;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  /* ---------- 1.10 手机适配：窄屏时卡片变成一列 ---------- */
+  @media (max-width: 520px) {
+    .page { width: calc(100% - 2rem); }
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- 1.11 尊重系统“减少动态效果”的设置 ---------- */
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+
+<body>
+
+<!-- ============================================================================
+     第二部分　背景层
+     功能：把 images/bg.jpg 铺满整个窗口，再盖一层深色遮罩，
+           这样不管照片多亮，白色文字都看得清。
+     说明：这里不需要你填任何内容。换底图 = 替换 images/bg.jpg 这个文件。
+     ============================================================================ -->
+<div class="bg-layer" aria-hidden="true"></div>
+
+
+<!-- ============================================================================
+     第三部分　页面主体
+     顺序是：标题 → 搜索框 → 网站分组 → 无结果提示 → 页脚。
+     ============================================================================ -->
+<main class="page">
+
+  <!-- ---------- 3.1 标题区：改这三行文字，就是页面的“门面” ---------- -->
+  <header class="hero">
+    <p class="hero-kicker">My Start Page</p>
+    <h1>互动式地图索引</h1>
+    <p class="hero-sub">初始加载可能卡顿</p>
+  </header>
+
+  <!-- ---------- 3.2 搜索框：输入关键词即可过滤下面的卡片（功能在第五部分） ---------- -->
+  <div class="search">
+    <span class="search-icon" aria-hidden="true">🔍</span>
+    <input
+      id="search-input"
+      type="search"
+      placeholder="搜索收藏的网站…（按 / 键快速定位）"
+      autocomplete="off"
+      aria-label="搜索收藏的网站"
+    />
+  </div>
+
+  <!-- ==========================================================================
+       3.3 网站分组　★ 这是你最常改的地方 ★
+       结构说明：
+         <section class="group">        一整个分组，比如“常用搜索”
+           <h2 class="group-title">      分组名称
+           <div class="grid">            卡片网格（排成几列由浏览器自动决定）
+             <a class="card">            一张卡片 = 一个网站
+
+       加一个网站：复制一整块 <a class="card">…</a>，粘贴到某个 grid 里，改三处：
+         href="网址"                   ① 网址（必须带 https://）
+         <span class="card-title">     ② 网站名字
+         <span class="card-desc">      ③ 一行小字说明（可以留空）
+       加一个分组：复制整个 <section class="group">…</section> 块，改组名即可。
+       ========================================================================== -->
+  <div class="groups">
+
+    <!-- ===== 第 1 组：常用搜索 ===== -->
+    <section class="group">
+      <h2 class="group-title">常用搜索</h2>
+      <div class="grid">
+
+        <!-- ↓↓↓ 卡片模板：复制这一整块就能加一个新网站 ↓↓↓ -->
+        <a class="card" href="https://www.baidu.com" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">🔎</span>
+          <span class="card-body">
+            <span class="card-title">百度</span>
+            <span class="card-desc">中文搜索</span>
+          </span>
+        </a>
+        <!-- ↑↑↑ 卡片模板结束 ↑↑↑ -->
+
+        <a class="card" href="https://www.bing.com" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">🌐</span>
+          <span class="card-body">
+            <span class="card-title">Bing</span>
+            <span class="card-desc">国际搜索</span>
+          </span>
+        </a>
+
+        <a class="card" href="https://zh.wikipedia.org" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">📚</span>
+          <span class="card-body">
+            <span class="card-title">维基百科</span>
+            <span class="card-desc">自由的百科全书</span>
+          </span>
+        </a>
+
+      </div>
+    </section>
+
+    <!-- ===== 第 2 组：学习与文档 ===== -->
+    <section class="group">
+      <h2 class="group-title">学习与文档</h2>
+      <div class="grid">
+
+        <a class="card" href="https://developer.mozilla.org/zh-CN/" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">📘</span>
+          <span class="card-body">
+            <span class="card-title">MDN</span>
+            <span class="card-desc">Web 开发官方文档</span>
+          </span>
+        </a>
+
+        <a class="card" href="https://www.runoob.com" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">🐣</span>
+          <span class="card-body">
+            <span class="card-title">菜鸟教程</span>
+            <span class="card-desc">零基础入门教程</span>
+          </span>
+        </a>
+
+        <a class="card" href="https://github.com" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">🐙</span>
+          <span class="card-body">
+            <span class="card-title">GitHub</span>
+            <span class="card-desc">代码托管与开源项目</span>
+          </span>
+        </a>
+
+      </div>
+    </section>
+
+    <!-- ===== 第 3 组：工具与效率 ===== -->
+    <section class="group">
+      <h2 class="group-title">工具与效率</h2>
+      <div class="grid">
+
+        <a class="card" href="https://chat.deepseek.com" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">💬</span>
+          <span class="card-body">
+            <span class="card-title">DeepSeek</span>
+            <span class="card-desc">AI 对话助手</span>
+          </span>
+        </a>
+
+        <a class="card" href="https://docs.qq.com" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">📄</span>
+          <span class="card-body">
+            <span class="card-title">腾讯文档</span>
+            <span class="card-desc">在线文档与表格</span>
+          </span>
+        </a>
+
+        <a class="card" href="https://unsplash.com" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">🖼️</span>
+          <span class="card-body">
+            <span class="card-title">Unsplash</span>
+            <span class="card-desc">免费高清图库（找底图用）</span>
+          </span>
+        </a>
+
+      </div>
+    </section>
+
+    <!-- ===== 第 4 组：影音娱乐 ===== -->
+    <section class="group">
+      <h2 class="group-title">影音娱乐</h2>
+      <div class="grid">
+
+        <a class="card" href="https://www.bilibili.com" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">📺</span>
+          <span class="card-body">
+            <span class="card-title">哔哩哔哩</span>
+            <span class="card-desc">视频与学习区</span>
+          </span>
+        </a>
+
+        <a class="card" href="https://www.youtube.com" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">▶️</span>
+          <span class="card-body">
+            <span class="card-title">YouTube</span>
+            <span class="card-desc">全球视频平台</span>
+          </span>
+        </a>
+
+        <a class="card" href="https://music.163.com" target="_blank" rel="noopener">
+          <span class="card-icon" aria-hidden="true">🎵</span>
+          <span class="card-body">
+            <span class="card-title">网易云音乐</span>
+            <span class="card-desc">听歌与歌单</span>
+          </span>
+        </a>
+
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ---------- 3.4 搜索没有结果时的提示（默认隐藏，由第五部分的脚本控制） ---------- -->
+  <p id="empty-tip" hidden>没有找到匹配的网站，换个关键词试试。</p>
+
+  <!-- ---------- 3.5 页脚：改这里的文字即可，删掉也不影响使用 ---------- -->
+  <footer class="footer">
+    <p>提示：按 <kbd>/</kbd> 搜索，按 <kbd>Esc</kbd> 清空 </p>
+    <p>© 2026 Power by Whitebrich Version:Alpha</p>
+  </footer>
+
+</main>
+
+
+<!-- ============================================================================
+     第四部分　交互脚本 <script>（可选）
+     功能：让上面的搜索框真正生效——输入文字，只保留名字或说明里含该文字的卡片。
+     如果你完全不想碰 JS：把这一整段 <script>…</script> 删掉，
+     页面仍然能正常打开、点击跳转，只是搜索框不再过滤内容。
+     ============================================================================ -->
+<script>
+  // ① 先拿到页面上的几个关键元素（后面都靠它们干活）
+  var searchInput = document.querySelector("#search-input");   // 搜索输入框
+  var allCards    = document.querySelectorAll(".card");        // 所有网站卡片
+  var allGroups   = document.querySelectorAll(".group");       // 所有分组
+  var emptyTip    = document.querySelector("#empty-tip");      // “没有结果”提示
+
+  // ② 过滤主函数：根据输入框里的关键词，决定每张卡片显示还是隐藏
+  function filterCards() {
+    var keyword = searchInput.value.trim().toLowerCase();      // 关键词转小写，忽略大小写差异
+    var visibleCount = 0;
+
+    allCards.forEach(function (card) {
+      var text = card.textContent.toLowerCase();               // 卡片上的全部文字
+      var matched = keyword === "" || text.indexOf(keyword) !== -1;
+      card.hidden = !matched;                                  // 不匹配 → 隐藏
+      if (matched) visibleCount += 1;                          // 顺便数一下还剩几张
+    });
+
+    // 某一组的卡片全被藏起来了，就把这一组的标题也一起藏起来
+    allGroups.forEach(function (group) {
+      var hasVisibleCard = Array.prototype.some.call(
+        group.querySelectorAll(".card"),
+        function (card) { return !card.hidden; }
+      );
+      group.hidden = !hasVisibleCard;
+    });
+
+    // 一张都没匹配到，才显示“没有结果”的提示
+    emptyTip.hidden = visibleCount > 0;
+  }
+
+  // ③ 每输入一个字、每删一个字，都重新过滤一次
+  searchInput.addEventListener("input", filterCards);
+
+  // ④ 两个小快捷键：按 / 直接跳到搜索框；按 Esc 清空搜索并退出输入
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "/" && document.activeElement !== searchInput) {
+      event.preventDefault();
+      searchInput.focus();
+    }
+    if (event.key === "Escape" && document.activeElement === searchInput) {
+      searchInput.value = "";
+      filterCards();
+      searchInput.blur();
+    }
+  });
+</script>
+
+</body>
+</html>
