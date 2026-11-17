@@ -1,4 +1,20 @@
 <!DOCTYPE html>
+<!--
+  ============================================================================
+   三维地形互动地图（3D Terrain Explorer）　版本 Beta　作者 WhiteBrich YZH
+  ----------------------------------------------------------------------------
+   · 技术栈：Cesium 1.120 + 天地图影像/注记（WMTS）+ Cesium ion 世界地形
+   · 结构分区（按文件从上到下）：
+       ① 样式区：设计变量 → 顶栏 → 地形夸张面板 → 右侧工具 →
+                 坐标 / 剖面 / 提示 → 加载封面 → 响应式断点
+       ② 结构区：页面 DOM，每个功能区块前均有中文注释
+       ③ 脚本区：四~八 初始化、九 提示、十 指北针、十一 缩放、
+                 十二 搜索、十三 标记、十四 剖面、十五 量算、
+                 十六 鼠标事件、十七 地形夸张、十八 坐标读数
+   · 修改密钥：见脚本「四、全局配置区」中的 TIANDITU_KEY / CESIUM_ION_TOKEN
+   · 详细用法：见同目录《Terrimanl-使用说明.md》
+  ============================================================================
+-->
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
@@ -10,6 +26,7 @@
     <style>
         /* ============================================================
            一、设计系统：配色 / 字体 / 圆角 / 阴影
+           · 集中定义配色 / 字体 / 圆角 / 阴影等 CSS 变量，改这一处即可整体换肤
            ============================================================ */
         :root {
             --bg-0: #04080f;
@@ -53,7 +70,9 @@
 
         /* ============================================================
            二、顶部工具条：品牌 / 搜索 / 模式切换
+           · 深色渐变顶栏：左侧品牌、中间搜索、右侧模式开关；空白处点击可穿透到地图
            ============================================================ */
+        /* 顶栏容器：固定顶部，底部渐隐；pointer-events:none 让空白处仍可拖动地图 */
         .topbar {
             position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
             height: 70px; padding: 0 132px 0 22px;
@@ -81,6 +100,7 @@
         }
 
         /* ---------- 搜索 ---------- */
+        /* 搜索区域：输入框 + 按钮，结果列表相对它定位 */
         #searchPanel { position: relative; display: flex; align-items: center; gap: 8px; }
         .search-box {
             display: flex; align-items: center; gap: 8px; height: 38px;
@@ -161,7 +181,9 @@
 
         /* ============================================================
            三、地形夸张面板
+           · 左上角地形夸张面板：倍数滑条 + 预设按钮 + 实时读数
            ============================================================ */
+        /* 地形夸张面板容器 */
         #terrainPanel {
             position: absolute; top: 88px; left: 22px; z-index: 999;
             width: 272px; padding: 16px 16px 14px;
@@ -183,6 +205,7 @@
         }
         .panel-value small { font-size: 11px; color: var(--muted); font-weight: 500; margin-left: 2px; }
 
+        /* 自定义范围滑条：--fill 由 JS 写入，表示已选区间的百分比 */
         input.slider {
             -webkit-appearance: none; appearance: none;
             width: 100%; height: 6px; margin: 15px 0 6px;
@@ -212,6 +235,7 @@
             font-size: 10px; color: #64798f; letter-spacing: 0.3px;
         }
 
+        /* 快捷倍数按钮（1× / 1.5× / 2× / 3× / 5×） */
         .presets { display: flex; gap: 6px; margin-top: 12px; }
         .preset {
             flex: 1; height: 26px; border-radius: 8px; cursor: pointer;
@@ -231,6 +255,7 @@
 
         /* ============================================================
            四、右侧导航 / 工具条
+           · 右侧竖向工具区：指北针轮盘、缩放 / 归位、距离与面积量算按钮
            ============================================================ */
         #navPanel {
             position: absolute; top: 88px; right: 22px; z-index: 998;
@@ -238,6 +263,7 @@
             gap: 14px; user-select: none;
         }
 
+        /* 指北针轮盘：按住拖动可改变相机方位（中键另可改变俯仰） */
         #compass {
             width: 78px; height: 78px; border-radius: 50%;
             display: flex; align-items: center; justify-content: center;
@@ -289,7 +315,9 @@
 
         /* ============================================================
            五、坐标读数 / 剖面图 / 状态提示
+           · 底部与浮层：坐标读数条、剖面图抽屉、状态提示胶囊，以及剖面展开时的避让
            ============================================================ */
+        /* 底部左侧坐标读数条 */
         #coordHud {
             position: absolute; left: 22px; bottom: 22px; z-index: 998;
             display: flex; align-items: center; gap: 16px;
@@ -307,6 +335,7 @@
         }
         #coordHud .divider { width: 1px; height: 12px; background: rgba(148, 197, 255, 0.16); }
 
+        /* 剖面图抽屉：默认 display:none，加 .visible 展开 */
         #profilePanel {
             position: absolute; left: 0; right: 0; bottom: 0; z-index: 997;
             height: 250px; display: none; flex-direction: column;
@@ -339,6 +368,7 @@
         }
         #profileCanvas { display: block; width: 100%; flex: 1; min-height: 0; }
 
+        /* 状态提示胶囊：默认透明，加 .show 后显示 */
         #statusMsg {
             position: absolute; left: 50%; bottom: 30px; z-index: 1001;
             transform: translate(-50%, 10px); opacity: 0;
@@ -358,7 +388,9 @@
 
         /* ============================================================
            六、加载遮罩
+           · 全屏加载封面：加载动画 + 作者署名 + 版本号，地形就绪后淡出
            ============================================================ */
+        /* 全屏加载封面：地形就绪后加 .hidden 淡出 */
         #loading {
             position: fixed; inset: 0; z-index: 3000;
             display: flex; flex-direction: column;
@@ -368,6 +400,7 @@
             transition: opacity 0.7s ease, visibility 0.7s ease;
         }
         #loading.hidden { opacity: 0; visibility: hidden; }
+        /* 旋转的加载圆环 */
         .loader-ring {
             width: 48px; height: 48px; border-radius: 50%;
             border: 2px solid rgba(56, 189, 248, 0.18);
@@ -391,6 +424,7 @@
 
         /* ============================================================
            七、小屏适配
+           · 响应式断点：≤1180px 收窄搜索框、隐藏按钮文字；≤860px 再隐藏品牌与坐标条
            ============================================================ */
         @media (max-width: 1180px) {
             .brand-sub { display: none; }
@@ -416,7 +450,7 @@
      三、页面结构
      ============================================================ -->
 
-<!-- ---------- 加载遮罩 ---------- -->
+<!-- ---------- 加载封面：加载动画 + 作者 / 版本号，地形就绪（或 7 秒兜底）后淡出 ---------- -->
 <div id="loading">
     <div class="loader-ring"></div>
     <div class="load-title">三维地形互动地图</div>
@@ -427,11 +461,11 @@
     <div class="load-sub">正在加载天地图影像与全球地形…</div>
 </div>
 
-<!-- ---------- 三维场景 ---------- -->
+<!-- ---------- 三维场景：Cesium 画布 + 四角暗角遮罩（暗角不拦截鼠标） ---------- -->
 <div id="cesiumContainer"></div>
 <div id="vignette"></div>
 
-<!-- ---------- 顶部工具条：品牌 · 搜索 · 模式 ---------- -->
+<!-- ---------- 顶栏：左 品牌标识 / 中 地名搜索 / 右 标记、剖面模式开关 ---------- -->
 <header class="topbar">
     <div class="brand">
         <div class="brand-logo">
@@ -482,7 +516,7 @@
     </div>
 </header>
 
-<!-- ---------- 地形夸张控制 ---------- -->
+<!-- ---------- 地形夸张：滑条（1×–5×）+ 快捷倍数按钮 + 当前倍数读数 ---------- -->
 <aside id="terrainPanel">
     <div class="panel-head">
         <div class="panel-title">
@@ -514,7 +548,7 @@
     </div>
 </aside>
 
-<!-- ---------- 右侧导航工具条（指北针 + 缩放 + 量算） ---------- -->
+<!-- ---------- 右侧工具条：指北针轮盘（拖动转向）/ 缩放归位 / 距离·面积量算 ---------- -->
 <div id="navPanel">
 
     <!-- 指北针 / 视角轮盘：左键拖动旋转方位，中键拖动调整俯仰与方位 -->
@@ -584,7 +618,7 @@
     </div>
 </div>
 
-<!-- ---------- 鼠标位置读数 ---------- -->
+<!-- ---------- 鼠标位置读数：经度 / 纬度 / 海拔，随鼠标移动实时刷新 ---------- -->
 <div id="coordHud">
     <div class="coord-item"><span>经度</span><b id="coordLon">—</b></div>
     <div class="divider"></div>
@@ -593,7 +627,7 @@
     <div class="coord-item"><span>海拔</span><b id="coordAlt">—</b></div>
 </div>
 
-<!-- ---------- 剖面图面板 ---------- -->
+<!-- ---------- 剖面图抽屉：默认隐藏，选完两点后从底部展开并绘制曲线 ---------- -->
 <div id="profilePanel">
     <div id="profileHeader">
         <div class="title-wrap">
@@ -608,7 +642,7 @@
     <canvas id="profileCanvas"></canvas>
 </div>
 
-<!-- ---------- 状态提示 ---------- -->
+<!-- ---------- 状态提示：底部胶囊式提示条，由 showStatus() 控制显隐 ---------- -->
 <div id="statusMsg"></div>
 
 <script src="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Cesium.js"></script>
@@ -616,6 +650,7 @@
 <script>
 /* ============================================================
  * 四、全局配置区
+ * · 全局常量：天地图 tk、Cesium ion Token、中国范围矩形、相机高度上下限与缩放参数
  * ============================================================ */
 const TIANDITU_KEY = '67202ad0231a8193b8cdda3816077687';//天地图密钥
 const CESIUM_ION_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6IjlVZENLWEkzMklfRERnOEUiLCJqdGkiOiI4ZTNiNjM4OC03NGQ0LTQxYTYtYmU1OS03NzY2YWI3MTM0ODIiLCJpZCI6NDkyNTMzLCJzdWIiOiJXaGl0ZUJyaWNoIiwiaXNzIjoiaHR0cHM6Ly9hcGkuY2VzaXVtLmNvbSIsImF1ZCI6IldoaXRlQnJpY2hfZGVmYXVsdCIsImlhdCI6MTc4OTU1OTQ3MH0.9UqNi6F0cDZkv9bQze3iZZqmrtQFDB6ERuspXtnVqLQ';//Cesium密钥
@@ -638,6 +673,7 @@ let globalTerrainProvider = null;
 
 /* ============================================================
  * 五、初始化 Viewer（含相机控制参数）
+ * · 创建 Viewer，并配置相机控制器（缩放范围、惯性、碰撞检测、防穿地）
  * ============================================================ */
 const viewer = new Cesium.Viewer('cesiumContainer', {
     baseLayerPicker: false,
@@ -663,6 +699,7 @@ Cesium.RequestScheduler.maximumRequests = 20;
 Cesium.RequestScheduler.maximumRequestsPerServer = 10;
 
 /* ---------- 相机控制器参数：缩放速度 / 缩放范围 / 防穿地 ---------- */
+/* 【功能】相机控制器参数：限制最近 / 最远距离、开启碰撞检测、降低缩放灵敏度 */
 (function setupCameraController() {
     const ssc = viewer.scene.screenSpaceCameraController;
 
@@ -688,7 +725,9 @@ Cesium.RequestScheduler.maximumRequestsPerServer = 10;
 
 /* ============================================================
  * 六、加载 Cesium 官方世界地形
+ * · 异步加载 Cesium 世界地形；失败自动回退椭球地形，保证页面仍可用
  * ============================================================ */
+/* 【功能】加载 Cesium 官方世界地形；成功设置地形与深度测试，失败回退椭球地形 */
 async function initTerrain() {
     try {
         const terrainProvider = await Cesium.createWorldTerrainAsync({
@@ -713,6 +752,7 @@ initTerrain();
 
 /* ============================================================
  * 七、天地图影像底图 + 注记
+ * · 叠加天地图影像底图（img_w）与中文注记层（cia_w）
  * ============================================================ */
 viewer.imageryLayers.addImageryProvider(
     new Cesium.WebMapTileServiceImageryProvider({
@@ -732,12 +772,14 @@ viewer.imageryLayers.addImageryProvider(
 
 /* ============================================================
  * 八、初始视角：俯瞰中国全境
+ * · 设置初始视角，并提供“飞回中国全境”的复位函数
  * ============================================================ */
 viewer.camera.setView({
     destination: CHINA_RECTANGLE
 });
 
 /* 视角复位函数：飞到中国全境 */
+/* 【功能】相机飞回中国全境视角；duration 为动画时长（秒） */
 function resetToChina(duration = 1.6) {
     viewer.camera.flyTo({
         destination: CHINA_RECTANGLE,
@@ -749,9 +791,12 @@ function resetToChina(duration = 1.6) {
 
 /* ============================================================
  * 九、通用工具：状态提示
+ * · 状态提示胶囊与加载封面的显隐控制
  * ============================================================ */
 const statusMsg = document.getElementById('statusMsg');
 let statusTimer = null;
+
+/* 【功能】底部胶囊提示；duration=0 表示常驻，直到下一次调用 */
 
 function showStatus(msg, duration = 3000) {
     if (!statusMsg) return;
@@ -770,6 +815,8 @@ const loadingOverlay = document.getElementById('loading');
 const LOADING_START = performance.now();
 const LOADING_MIN_MS = 1500;   // 封面至少停留时长，保证作者 / 版本信息可读
 let loadingHidden = false;
+
+/* 【功能】淡出加载封面；并保证封面至少停留 LOADING_MIN_MS 毫秒 */
 
 function hideLoading() {
     if (loadingHidden || !loadingOverlay) return;
@@ -790,6 +837,7 @@ setTimeout(hideLoading, 7000);
 
 /* ============================================================
  * 十、右侧工具条 ①：指北针轮盘（可拖动调整相机视角）
+ * · 指北针轮盘：拖动改变相机方位角，按住中键拖动可同时改变俯仰角
  *     · 左键拖动：旋转方位角
  *     · 中键拖动：同时调整方位角与俯仰角
  * ============================================================ */
@@ -813,6 +861,7 @@ let compassDrag = null;
 let compassReadoutTimer = null;
 
 /* 取屏幕中心对应的地表点作为环绕轴心（取不到时返回 undefined） */
+/* 【功能】取屏幕中心对应的地表点，作为轮盘旋转的轴心；取不到时返回 null */
 function getCompassPivot() {
     const scene  = viewer.scene;
     const canvas = scene.canvas;
@@ -827,6 +876,7 @@ function getCompassPivot() {
 }
 
 /* ---------- 方位 / 俯仰读数 ---------- */
+/* 【功能】在轮盘左侧显示当前方位角与俯仰角读数 */
 function updateCompassReadout(heading, pitch) {
     if (!compassReadout) return;
 
@@ -838,6 +888,8 @@ function updateCompassReadout(heading, pitch) {
     compassReadout.classList.add('show');
 }
 
+/* 【功能】延时隐藏读数；拖动过程中不隐藏 */
+
 function hideCompassReadout(delay) {
     if (!compassReadout) return;
     clearTimeout(compassReadoutTimer);
@@ -847,6 +899,7 @@ function hideCompassReadout(delay) {
 }
 
 /* ---------- 应用新视角：绕屏幕中心的地表点旋转相机 ---------- */
+/* 【功能】绕轴心（LookAt）应用新的方位 / 俯仰，并立即恢复世界坐标系 */
 function applyCompassView(drag, heading, pitch) {
     const camera = viewer.camera;
 
@@ -872,6 +925,7 @@ function applyCompassView(drag, heading, pitch) {
 }
 
 /* ---------- 拖动开始 ---------- */
+/* 【功能】按下轮盘：记录指针、起始角度、轴心与相机到轴心的距离 */
 function startCompassDrag(e) {
     // 只响应左键与中键
     if (e.button !== 0 && e.button !== 1) return;
@@ -907,6 +961,7 @@ function startCompassDrag(e) {
 }
 
 /* ---------- 拖动过程 ---------- */
+/* 【功能】拖动轮盘：水平位移换算方位角，中键拖动时竖向位移换算俯仰角 */
 function onCompassDragMove(e) {
     if (!compassDrag || e.pointerId !== compassDrag.pointerId) return;
     e.preventDefault();
@@ -927,6 +982,7 @@ function onCompassDragMove(e) {
 }
 
 /* ---------- 拖动结束 ---------- */
+/* 【功能】松开轮盘：释放指针捕获，延时隐藏读数 */
 function endCompassDrag(e) {
     if (!compassDrag) return;
     if (e && e.pointerId !== undefined && e.pointerId !== compassDrag.pointerId) return;
@@ -957,9 +1013,11 @@ compassEl.addEventListener('auxclick', function (e) {
 
 /* ============================================================
  * 十一、右侧工具条 ②：按钮式放大 / 缩小 / 重置归位
+ * · 按钮式放大 / 缩小 / 重置归位（按倍率升降相机高度）
  * ============================================================ */
 
 /* 取得当前位置允许的最低相机高度（地形高度 + 安全余量） */
+/* 【功能】按该经纬度的地形高度加安全余量，得出相机允许的最低高度 */
 function getMinAllowedHeight(lonRad, latRad) {
     let ground = 0;
     try {
@@ -970,6 +1028,7 @@ function getMinAllowedHeight(lonRad, latRad) {
 }
 
 /* 按倍率垂直升降相机：保持经纬度与姿态，只改高度 */
+/* 【功能】按固定倍率垂直升降相机，保持经纬度与姿态不变 */
 function zoomByStep(isZoomOut) {
     const camera = viewer.camera;
     const carto = Cesium.Cartographic.fromCartesian(camera.positionWC);
@@ -1008,6 +1067,7 @@ document.getElementById('homeBtn').addEventListener('click', () => resetToChina(
 
 /* ============================================================
  * 十二、搜索功能
+ * · 天地图行政区划与 POI 搜索：输入地名 → 结果列表 → 点击飞向该地
  * ============================================================ */
 const searchInput = document.getElementById('searchInput');
 const searchBtn   = document.getElementById('searchBtn');
@@ -1015,10 +1075,14 @@ const resultList  = document.getElementById('resultList');
 
 let searchMarker = null;
 
+/* 【功能】清空并隐藏搜索结果下拉列表 */
+
 function hideResultList() {
     resultList.style.display = 'none';
     resultList.innerHTML = '';
 }
+
+/* 【功能】调用天地图行政区划接口检索地名，返回名称与中心点 */
 
 async function searchAdministrative(keyword) {
     const url = `https://api.tianditu.gov.cn/v2/administrative?keyword=${encodeURIComponent(keyword)}&childLevel=0&extensions=false&tk=${TIANDITU_KEY}`;
@@ -1037,6 +1101,8 @@ async function searchAdministrative(keyword) {
     } catch (err) { console.warn('行政区划搜索失败：', err); }
     return [];
 }
+
+/* 【功能】调用天地图 POI 接口检索兴趣点，返回名称、坐标与地址 */
 
 async function searchPOI(keyword) {
     const postStr = {
@@ -1066,6 +1132,8 @@ async function searchPOI(keyword) {
     } catch (err) { console.warn('POI搜索失败：', err); return []; }
 }
 
+/* 【功能】搜索入口：先查行政区划，无结果再查 POI，最后渲染列表 */
+
 async function doSearch() {
     const keyword = searchInput.value.trim();
     if (!keyword) { showStatus('请输入搜索关键词'); return; }
@@ -1091,6 +1159,8 @@ async function doSearch() {
     searchBtn.textContent = '搜索';
 }
 
+/* 【功能】渲染搜索结果列表；点击条目调用 flyToLocation 飞向该地 */
+
 function renderResults(results) {
     resultList.innerHTML = '';
     results.forEach((item, index) => {
@@ -1111,6 +1181,8 @@ function renderResults(results) {
     });
     resultList.style.display = 'block';
 }
+
+/* 【功能】飞到目标经纬度并放置红色标记；行政区划与 POI 采用不同高度与俯仰 */
 
 function flyToLocation(lon, lat, name, isAdmin) {
     if (searchMarker) { viewer.entities.remove(searchMarker); searchMarker = null; }
@@ -1153,10 +1225,13 @@ document.addEventListener('click', e => {
 
 /* ============================================================
  * 十三、标记模式
+ * · 标记模式：在地图上放置带序号的点标记，关闭模式时统一清除
  * ============================================================ */
 const markBtn = document.getElementById('markBtn');
 let markMode = false;
 let userMarkers = [];
+
+/* 【功能】开关标记模式；开启前关闭剖面 / 量算，关闭时清除全部标记 */
 
 function toggleMarkMode() {
     const next = !markMode;
@@ -1186,6 +1261,7 @@ markBtn.addEventListener('click', toggleMarkMode);
 
 /* ============================================================
  * 十四、剖面图模式
+ * · 剖面图模式：选起点与终点，沿两点采样 100 个高程点并绘制剖面曲线
  * ============================================================ */
 const profileBtn       = document.getElementById('profileBtn');
 const profilePanel     = document.getElementById('profilePanel');
@@ -1198,6 +1274,8 @@ let profileMode = false;
 let profilePoints = [];        // 起点、终点经纬度
 let profileEntities = [];      // 线条、端点实体
 let profileRubberLine = null;  // 鼠标移动预览线
+
+/* 【功能】开关剖面图模式；开启前关闭标记 / 量算 */
 
 function toggleProfileMode() {
     const next = !profileMode;
@@ -1220,6 +1298,8 @@ function toggleProfileMode() {
         showStatus('剖面图模式已关闭', 2000);
     }
 }
+
+/* 【功能】清除剖面点、连线与预览线，并收起面板 */
 
 function clearProfile() {
     profilePoints = [];
@@ -1244,6 +1324,7 @@ profileCloseBtn.addEventListener('click', () => {
 });
 
 /* ---------- 剖面图绘制核心 ---------- */
+/* 【功能】用采样高程绘制剖面曲线、坐标轴、渐变填充与统计信息 */
 function drawProfile(lon1, lat1, lon2, lat2, positions) {
     profilePanel.classList.add('visible');
     document.body.classList.add('profile-open');
@@ -1352,6 +1433,7 @@ function drawProfile(lon1, lat1, lon2, lat2, positions) {
 }
 
 /* ---------- 采样并绘制 ---------- */
+/* 【功能】在起终点之间等距采样 100 个点的高程，并交给 drawProfile 绘制 */
 async function sampleAndDrawProfile(lon1, lat1, lon2, lat2) {
     showStatus('正在采样地形，请稍候...', 0);
 
@@ -1386,6 +1468,7 @@ async function sampleAndDrawProfile(lon1, lat1, lon2, lat2) {
 
 /* ============================================================
  * 十五、量算工具：距离量算 / 面积量算 / 清除
+ * · 距离 / 面积量算：依次取点、实时绘制、计算长度与面积、右键结束
  * ============================================================ */
 const distanceBtn     = document.getElementById('distanceBtn');
 const areaBtn         = document.getElementById('areaBtn');
@@ -1400,6 +1483,7 @@ let measurePreviewEntity = null; // 鼠标移动时的预览线
 /* ---------- 数值计算辅助 ---------- */
 
 /* 折线总长（米），使用椭球测地线距离 */
+/* 【功能】按椭球测地线逐段累加，得到折线总长度（米） */
 function calcTotalDistance(points) {
     let total = 0;
     for (let i = 1; i < points.length; i++) {
@@ -1413,6 +1497,7 @@ function calcTotalDistance(points) {
 }
 
 /* 球面多边形面积（平方米） */
+/* 【功能】用球面多边形面积公式计算取点围成的面积（平方米） */
 function calcPolygonArea(points) {
     if (points.length < 3) return 0;
     const R = 6378137.0;
@@ -1429,14 +1514,18 @@ function calcPolygonArea(points) {
     return Math.abs(sum * R * R / 2);
 }
 
+/* 【功能】距离格式化：≥1km 显示公里，否则显示米 */
+
 function formatDistance(m) {
     return m >= 1000 ? (m / 1000).toFixed(3) + ' km' : m.toFixed(1) + ' m';
 }
+/* 【功能】面积格式化：≥1km² 显示平方公里，否则显示平方米 */
 function formatArea(m2) {
     return m2 >= 1e6 ? (m2 / 1e6).toFixed(4) + ' km²' : m2.toFixed(1) + ' m²';
 }
 
 /* ---------- 图形绘制 ---------- */
+/* 【功能】重绘量算的顶点、折线 / 多边形与结果标签 */
 function updateMeasureGraphics() {
     // 清除上一轮绘制的图形
     measureEntities.forEach(e => viewer.entities.remove(e));
@@ -1527,6 +1616,7 @@ function updateMeasureGraphics() {
 }
 
 /* ---------- 添加顶点 ---------- */
+/* 【功能】追加一个量算顶点，并刷新图形与当前结果提示 */
 function addMeasurePoint(lon, lat) {
     measurePoints.push({ lon, lat });
     updateMeasureGraphics();
@@ -1539,6 +1629,7 @@ function addMeasurePoint(lon, lat) {
 }
 
 /* ---------- 结束当前量算（保留图形） ---------- */
+/* 【功能】结束本次量算：保留已画图形，清空顶点以便开始新一轮 */
 function finishMeasure() {
     if (measurePreviewEntity) {
         viewer.entities.remove(measurePreviewEntity);
@@ -1553,6 +1644,7 @@ function finishMeasure() {
 }
 
 /* ---------- 清除全部量算 ---------- */
+/* 【功能】清除全部量算图形（当前进行中的与已完成的） */
 function clearAllMeasure() {
     measureEntities.forEach(e => viewer.entities.remove(e));
     measureEntities = [];
@@ -1566,6 +1658,7 @@ function clearAllMeasure() {
 }
 
 /* ---------- 切换量算模式 ---------- */
+/* 【功能】切换量算模式（距离 / 面积）；重复点击同一按钮则退出 */
 function setMeasureMode(mode) {
     const nextMode = (measureMode === mode) ? null : mode;
 
@@ -1592,6 +1685,7 @@ function setMeasureMode(mode) {
 }
 
 /* ---------- 鼠标移动时的量算预览线 ---------- */
+/* 【功能】鼠标移动时绘制虚线预览线，跟随光标延伸 */
 function updateMeasurePreview(endPosition) {
     const ray = viewer.camera.getPickRay(endPosition);
     if (!ray) return;
@@ -1633,6 +1727,7 @@ clearMeasureBtn.addEventListener('click', () => {
 
 /* ============================================================
  * 十六、鼠标事件总入口：标记 / 剖面 / 量算 / 信息
+ * · 鼠标事件总入口：左键按当前模式分发，右键结束量算，移动时画预览与坐标读数
  * ============================================================ */
 const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 
@@ -1792,6 +1887,7 @@ handler.setInputAction(function (movement) {
 
 /* ============================================================
  * 十七、地形夸张（Vertical Exaggeration）
+ * · 地形夸张：把倍数写入 Cesium 场景，并同步滑条、读数与预设按钮
  *     · Cesium ≥ 1.116：scene.verticalExaggeration
  *     · 旧版本回退：scene.terrainExaggeration
  * ============================================================ */
@@ -1814,6 +1910,7 @@ handler.setInputAction(function (movement) {
     let rafId = 0;
 
     /* ---------- 写入 Cesium 场景 ---------- */
+    /* 【功能】把夸张倍数写入 Cesium；优先 verticalExaggeration，旧版本回退 terrainExaggeration */
     function writeToScene(value) {
         try {
             if (hasVertical) {
@@ -1831,6 +1928,7 @@ handler.setInputAction(function (movement) {
     }
 
     /* ---------- 同步滑条 / 数值 / 预设按钮 ---------- */
+    /* 【功能】同步滑条位置、--fill 填充比例、倍数读数与预设按钮选中态 */
     function renderExaggerationUI(value) {
         if (valueEl) valueEl.textContent = value.toFixed(1);
 
@@ -1849,6 +1947,7 @@ handler.setInputAction(function (movement) {
     }
 
     /* ---------- 应用夸张倍数 ---------- */
+    /* 【功能】把倍数限制在 1–5 后写入场景，并刷新界面 */
     function applyExaggeration(value) {
         currentValue = Math.min(EXAG_MAX, Math.max(EXAG_MIN, value));
         writeToScene(currentValue);
@@ -1856,6 +1955,7 @@ handler.setInputAction(function (movement) {
     }
 
     /* ---------- 拖动时按帧节流：避免频繁重建地形网格 ---------- */
+    /* 【功能】用 requestAnimationFrame 合并高频拖动，避免频繁重建地形网格 */
     function scheduleExaggeration(value) {
         if (rafId) cancelAnimationFrame(rafId);
         rafId = requestAnimationFrame(function () {
@@ -1896,6 +1996,7 @@ handler.setInputAction(function (movement) {
 
 /* ============================================================
  * 十八、鼠标位置：经纬度 / 海拔读数
+ * · 鼠标位置经纬度 / 海拔读数（节流刷新，避免频繁拾取）
  * ============================================================ */
 const coordLonEl = document.getElementById('coordLon');
 const coordLatEl = document.getElementById('coordLat');
@@ -1903,9 +2004,13 @@ const coordAltEl = document.getElementById('coordAlt');
 
 let coordHudAt = 0;
 
+/* 【功能】把十进制度格式化为「数值° E/W 或 N/S」 */
+
 function formatLonLat(deg, posSuffix, negSuffix) {
     return Math.abs(deg).toFixed(4) + '° ' + (deg >= 0 ? posSuffix : negSuffix);
 }
+
+/* 【功能】读取鼠标位置经纬度与地形高度写入底部读数条（约 90ms 节流） */
 
 function updateCoordHud(screenPos) {
     if (!coordLonEl) return;
