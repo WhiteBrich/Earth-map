@@ -2,165 +2,398 @@
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
-    <title>三维地形互动地图</title>
+    <title>三维地形互动地图 · 3D Terrain Explorer</title>
 
     <!-- ============================================================
          一、全局样式
          ============================================================ -->
     <style>
-        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
-        #cesiumContainer { width: 100%; height: 100%; }
+        /* ============================================================
+           一、设计系统：配色 / 字体 / 圆角 / 阴影
+           ============================================================ */
+        :root {
+            --bg-0: #04080f;
+            --glass: rgba(10, 20, 32, 0.74);
+            --glass-2: rgba(12, 24, 38, 0.94);
+            --line: rgba(148, 197, 255, 0.16);
+            --line-strong: rgba(148, 197, 255, 0.34);
+            --text: #e8f2ff;
+            --muted: #8fa9c4;
+            --accent: #38bdf8;
+            --accent-2: #22d3ee;
+            --accent-soft: rgba(56, 189, 248, 0.16);
+            --danger: #fb5c6c;
+            --shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+            --radius: 14px;
+            --font: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, -apple-system, sans-serif;
+        }
 
-        /* ---------- 顶部按钮栏 ---------- */
-        .topBtn {
-            position: absolute; top: 20px; z-index: 999;
-            padding: 10px 18px; font-size: 14px; cursor: pointer;
-            background: rgba(20, 30, 40, 0.88); color: #4fc3f7;
-            border: 1px solid #4fc3f7; border-radius: 4px;
-            font-family: "Microsoft YaHei", sans-serif; font-weight: 600;
-            transition: all 0.2s;
-        }
-        .topBtn:hover { background: rgba(79, 195, 247, 0.2); }
-        .topBtn.active { background: #ff5252; color: #fff; border-color: #ff5252; }
+        * { box-sizing: border-box; }
 
-        #markBtn { left: 20px; }
-        #profileBtn { left: 160px; }
+        html, body {
+            margin: 0; padding: 0; height: 100%; overflow: hidden;
+            background: var(--bg-0);
+        }
 
-        /* ---------- 搜索面板 ---------- */
-        #searchPanel {
-            position: absolute; top: 20px; left: 300px; z-index: 999;
-            display: flex; gap: 8px; font-family: "Microsoft YaHei", sans-serif;
+        /* 提高优先级，避免被 Cesium 自带样式表中的 body 字体覆盖 */
+        html body {
+            color: var(--text);
+            font-family: var(--font);
+            -webkit-font-smoothing: antialiased;
         }
-        #searchInput {
-            width: 220px; padding: 10px 14px; font-size: 14px;
-            border: 1px solid #4fc3f7; border-radius: 4px;
-            background: rgba(20, 30, 40, 0.88); color: #fff; outline: none;
-        }
-        #searchInput::placeholder { color: #aaa; }
-        #searchBtn {
-            padding: 10px 18px; font-size: 14px; cursor: pointer;
-            background: #4fc3f7; color: #0a1929; border: none;
-            border-radius: 4px; font-weight: 600;
-        }
-        #searchBtn:hover { background: #81d4fa; }
-        #searchBtn:disabled { background: #555; color: #999; cursor: not-allowed; }
 
-        /* ---------- 搜索结果列表 ---------- */
-        #resultList {
-            position: absolute; top: 62px; left: 300px; width: 320px;
-            max-height: 300px; overflow-y: auto;
-            background: rgba(20, 30, 40, 0.95);
-            border: 1px solid #4fc3f7; border-radius: 0 0 6px 6px;
-            z-index: 1000; display: none;
-            font-family: "Microsoft YaHei", sans-serif;
-        }
-        #resultList .result-item {
-            padding: 10px 14px; color: #ddd; font-size: 13px;
-            cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.08);
-            line-height: 1.5;
-        }
-        #resultList .result-item:hover { background: rgba(79, 195, 247, 0.2); }
-        #resultList .result-item .item-name { color: #4fc3f7; font-weight: 600; }
-        #resultList .result-item .item-addr { color: #999; font-size: 12px; }
+        #cesiumContainer { position: absolute; inset: 0; width: 100%; height: 100%; }
 
-        /* ---------- 剖面图面板 ---------- */
-        #profilePanel {
-            position: absolute; bottom: 0; left: 0; right: 0;
-            height: 220px; background: rgba(10, 20, 30, 0.95);
-            border-top: 2px solid #4fc3f7; z-index: 998;
-            display: none; font-family: "Microsoft YaHei", sans-serif;
-        }
-        #profilePanel.visible { display: block; }
-        #profileHeader {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 8px 20px; border-bottom: 1px solid rgba(255,255,255,0.08);
-        }
-        #profileHeader .title { color: #4fc3f7; font-size: 14px; font-weight: 600; }
-        #profileHeader .actions { display: flex; gap: 8px; }
-        #profileHeader button {
-            padding: 4px 12px; font-size: 12px; cursor: pointer;
-            background: transparent; color: #4fc3f7;
-            border: 1px solid #4fc3f7; border-radius: 3px;
-        }
-        #profileHeader button:hover { background: rgba(79,195,247,0.2); }
-        #profileCanvas { display: block; width: 100%; height: 170px; }
-
-        /* ---------- 状态提示 ---------- */
-        #statusMsg {
-            position: absolute; bottom: 240px; left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.8); color: #ddd;
-            padding: 10px 24px; border-radius: 20px;
-            font-size: 13px; font-family: "Microsoft YaHei", sans-serif;
-            display: none; z-index: 1001; white-space: nowrap;
+        /* ---------- 场景暗角：压暗四角，让界面元素浮起来 ---------- */
+        #vignette {
+            position: absolute; inset: 0; z-index: 2; pointer-events: none;
+            background: radial-gradient(ellipse at 50% 42%,
+                        rgba(0, 0, 0, 0) 52%, rgba(2, 6, 12, 0.55) 100%);
         }
 
         /* ============================================================
-           二、右侧导航 / 工具条样式（对应截图）
+           二、顶部工具条：品牌 / 搜索 / 模式切换
            ============================================================ */
-        #navPanel {
-            position: absolute; top: 20px; right: 20px; z-index: 999;
-            display: flex; flex-direction: column; align-items: center;
-            gap: 16px; font-family: "Microsoft YaHei", sans-serif;
-            user-select: none;
+        .topbar {
+            position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
+            height: 70px; padding: 0 132px 0 22px;
+            display: flex; align-items: center; gap: 20px;
+            pointer-events: none;
+            background: linear-gradient(180deg,
+                        rgba(4, 9, 16, 0.94) 0%,
+                        rgba(4, 9, 16, 0.68) 58%,
+                        rgba(4, 9, 16, 0) 100%);
+        }
+        .topbar > * { pointer-events: auto; }
+
+        .brand { display: flex; align-items: center; gap: 12px; flex: none; }
+        .brand-logo {
+            width: 38px; height: 38px; border-radius: 11px;
+            display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(135deg, #0ea5e9 0%, #22d3ee 55%, #6366f1 100%);
+            box-shadow: 0 8px 20px rgba(14, 165, 233, 0.38);
+        }
+        .brand-logo svg { width: 21px; height: 21px; }
+        .brand-title { font-size: 16px; font-weight: 700; letter-spacing: 0.6px; line-height: 1.25; }
+        .brand-sub {
+            font-size: 9.5px; letter-spacing: 2.4px; color: var(--muted);
+            text-transform: uppercase; margin-top: 1px;
         }
 
-        /* ---- 指北针 ---- */
-        #compass {
-            width: 76px; height: 76px; border-radius: 50%;
-            background: rgba(20, 30, 40, 0.72);
-            border: 1px solid rgba(255,255,255,0.22);
-            box-shadow: 0 0 12px rgba(0,0,0,0.55);
-            display: flex; align-items: center; justify-content: center;
-            cursor: grab;
-            touch-action: none; /* 防止触摸滚动干扰拖拽 */
+        /* ---------- 搜索 ---------- */
+        #searchPanel { position: relative; display: flex; align-items: center; gap: 8px; }
+        .search-box {
+            display: flex; align-items: center; gap: 8px; height: 38px;
+            padding: 0 12px; border-radius: 10px;
+            background: rgba(10, 20, 32, 0.8); border: 1px solid var(--line);
+            transition: border-color 0.2s, box-shadow 0.2s;
         }
-        /* ---- 轮盘交互反馈（悬停高亮 / 拖动状态） ---- */
-        #compass { transition: border-color 0.18s, box-shadow 0.18s; }
+        .search-box:focus-within {
+            border-color: var(--line-strong);
+            box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
+        }
+        .search-box svg { width: 15px; height: 15px; color: var(--muted); flex: none; }
+        #searchInput {
+            width: 210px; height: 100%; border: none; outline: none;
+            background: transparent; color: var(--text);
+            font-size: 13px; font-family: var(--font);
+        }
+        #searchInput::placeholder { color: #64798f; }
+        #searchBtn {
+            height: 38px; padding: 0 18px; border: none; border-radius: 10px;
+            cursor: pointer; font-size: 13px; font-weight: 600;
+            font-family: var(--font); color: #031420;
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            box-shadow: 0 8px 18px rgba(56, 189, 248, 0.28);
+            transition: filter 0.2s, transform 0.12s;
+        }
+        #searchBtn:hover { filter: brightness(1.08); }
+        #searchBtn:active { transform: translateY(1px); }
+        #searchBtn:disabled {
+            background: rgba(255, 255, 255, 0.1); color: var(--muted);
+            box-shadow: none; cursor: not-allowed;
+        }
+
+        /* ---------- 搜索结果列表 ---------- */
+        #resultList {
+            position: absolute; top: calc(100% + 10px); left: 0;
+            width: 342px; max-height: 320px; overflow-y: auto;
+            display: none; padding: 6px; border-radius: var(--radius);
+            background: var(--glass-2); border: 1px solid var(--line);
+            box-shadow: var(--shadow); backdrop-filter: blur(16px); z-index: 1001;
+        }
+        #resultList::-webkit-scrollbar { width: 6px; }
+        #resultList::-webkit-scrollbar-thumb {
+            background: rgba(148, 197, 255, 0.25); border-radius: 99px;
+        }
+        #resultList .result-item {
+            padding: 10px 12px; border-radius: 9px; cursor: pointer;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            transition: background 0.15s;
+        }
+        #resultList .result-item:last-child { border-bottom: none; }
+        #resultList .result-item:hover { background: var(--accent-soft); }
+        #resultList .item-name { color: var(--text); font-size: 13px; font-weight: 600; }
+        #resultList .item-addr { color: var(--muted); font-size: 11.5px; margin-top: 3px; line-height: 1.5; }
+
+        /* ---------- 模式按钮 ---------- */
+        .mode-group { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+        .mode-btn {
+            display: inline-flex; align-items: center; gap: 8px; height: 38px;
+            padding: 0 13px; border-radius: 10px; cursor: pointer;
+            font-size: 13px; font-weight: 600; font-family: var(--font);
+            color: var(--text); background: rgba(10, 20, 32, 0.8);
+            border: 1px solid var(--line); transition: all 0.18s;
+        }
+        .mode-btn svg { width: 16px; height: 16px; }
+        .mode-btn:hover { border-color: var(--line-strong); background: var(--accent-soft); color: #fff; }
+        .mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .mode-btn .mode-state {
+            font-size: 11px; font-weight: 500; padding: 1px 7px;
+            border-radius: 6px; background: rgba(255, 255, 255, 0.08); color: var(--muted);
+        }
+        .mode-btn.active {
+            background: linear-gradient(135deg, #f43f5e, #fb7185);
+            border-color: rgba(251, 113, 133, 0.9); color: #fff;
+            box-shadow: 0 8px 20px rgba(244, 63, 94, 0.32);
+        }
+        .mode-btn.active .mode-state { background: rgba(255, 255, 255, 0.25); color: #fff; }
+
+        /* ============================================================
+           三、地形夸张面板
+           ============================================================ */
+        #terrainPanel {
+            position: absolute; top: 88px; left: 22px; z-index: 999;
+            width: 272px; padding: 16px 16px 14px;
+            border-radius: var(--radius); background: var(--glass);
+            border: 1px solid var(--line); box-shadow: var(--shadow);
+            backdrop-filter: blur(16px);
+        }
+        #terrainPanel.unsupported { opacity: 0.55; }
+
+        .panel-head { display: flex; align-items: center; justify-content: space-between; }
+        .panel-title {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 13px; font-weight: 600; letter-spacing: 0.4px;
+        }
+        .panel-title svg { width: 15px; height: 15px; color: var(--accent); }
+        .panel-value {
+            font-size: 20px; font-weight: 700; color: var(--accent);
+            font-variant-numeric: tabular-nums; letter-spacing: 0.5px;
+        }
+        .panel-value small { font-size: 11px; color: var(--muted); font-weight: 500; margin-left: 2px; }
+
+        input.slider {
+            -webkit-appearance: none; appearance: none;
+            width: 100%; height: 6px; margin: 15px 0 6px;
+            border-radius: 99px; outline: none; cursor: pointer;
+            background: linear-gradient(90deg,
+                        var(--accent) 0%, var(--accent-2) var(--fill, 0%),
+                        rgba(255, 255, 255, 0.12) var(--fill, 0%),
+                        rgba(255, 255, 255, 0.12) 100%);
+        }
+        input.slider::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 16px; height: 16px; border-radius: 50%;
+            background: #fff; border: 3px solid var(--accent);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55); cursor: grab;
+        }
+        input.slider::-webkit-slider-thumb:active { cursor: grabbing; }
+        input.slider::-moz-range-thumb {
+            width: 14px; height: 14px; border-radius: 50%;
+            background: #fff; border: 3px solid var(--accent);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55); cursor: grab;
+        }
+        input.slider::-moz-range-track { background: transparent; }
+        input.slider:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .slider-scale {
+            display: flex; justify-content: space-between;
+            font-size: 10px; color: #64798f; letter-spacing: 0.3px;
+        }
+
+        .presets { display: flex; gap: 6px; margin-top: 12px; }
+        .preset {
+            flex: 1; height: 26px; border-radius: 8px; cursor: pointer;
+            font-size: 11px; font-family: var(--font); color: var(--muted);
+            background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line);
+            transition: all 0.15s;
+        }
+        .preset:hover { color: #fff; border-color: var(--line-strong); }
+        .preset.active {
+            color: #d9f2ff; background: var(--accent-soft);
+            border-color: rgba(56, 189, 248, 0.55);
+        }
+        .preset:disabled { cursor: not-allowed; opacity: 0.5; }
+
+        .panel-hint { margin-top: 11px; font-size: 11px; line-height: 1.7; color: var(--muted); }
+        .panel-hint b { color: #cfe9ff; font-weight: 600; }
+
+        /* ============================================================
+           四、右侧导航 / 工具条
+           ============================================================ */
+        #navPanel {
+            position: absolute; top: 88px; right: 22px; z-index: 998;
+            display: flex; flex-direction: column; align-items: center;
+            gap: 14px; user-select: none;
+        }
+
+        #compass {
+            width: 78px; height: 78px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(10, 20, 32, 0.78); border: 1px solid var(--line);
+            box-shadow: var(--shadow); cursor: grab; touch-action: none;
+            backdrop-filter: blur(12px);
+            transition: border-color 0.18s, box-shadow 0.18s;
+        }
         #compass:hover {
-            border-color: rgba(79, 195, 247, 0.7);
-            box-shadow: 0 0 16px rgba(79, 195, 247, 0.35);
+            border-color: rgba(56, 189, 248, 0.7);
+            box-shadow: 0 0 20px rgba(56, 189, 248, 0.28), var(--shadow);
         }
         #compass.dragging {
-            cursor: grabbing;
-            border-color: #4fc3f7;
-            box-shadow: 0 0 16px rgba(79, 195, 247, 0.5);
+            cursor: grabbing; border-color: var(--accent);
+            box-shadow: 0 0 22px rgba(56, 189, 248, 0.45);
         }
         #compass svg { width: 100%; height: 100%; pointer-events: none; }
 
-        /* ---- 拖动轮盘时显示的方位 / 俯仰读数 ---- */
         #compassReadout {
-            position: absolute; top: 25px; right: 88px;
-            padding: 5px 10px; border-radius: 4px;
-            background: rgba(10, 20, 30, 0.9);
-            border: 1px solid rgba(79, 195, 247, 0.45);
-            color: #9fe3ff; font-size: 12px; line-height: 1.4;
+            position: absolute; top: 30px; right: 92px;
+            padding: 6px 11px; border-radius: 8px;
+            background: var(--glass-2); border: 1px solid var(--line-strong);
+            color: #bfe9ff; font-size: 12px; line-height: 1.4;
             white-space: nowrap; pointer-events: none;
+            font-variant-numeric: tabular-nums;
             opacity: 0; transform: translateX(6px);
-            transition: opacity 0.15s ease, transform 0.15s ease;
+            transition: opacity 0.16s ease, transform 0.16s ease;
         }
         #compassReadout.show { opacity: 1; transform: translateX(0); }
 
-        /* ---- 按钮组 ---- */
         .toolGroup {
-            display: flex; flex-direction: column;
-            background: rgba(20, 30, 40, 0.85);
-            border: 1px solid rgba(255,255,255,0.22);
-            border-radius: 5px; overflow: hidden;
-            box-shadow: 0 0 12px rgba(0,0,0,0.55);
+            display: flex; flex-direction: column; overflow: hidden;
+            border-radius: 12px; background: rgba(10, 20, 32, 0.78);
+            border: 1px solid var(--line); box-shadow: var(--shadow);
+            backdrop-filter: blur(12px);
         }
         .toolGroup button {
-            width: 48px; height: 48px;
+            width: 46px; height: 46px;
             display: flex; align-items: center; justify-content: center;
-            background: transparent; color: #ffffff;
-            border: none; border-bottom: 1px solid rgba(255,255,255,0.14);
-            font-size: 22px; line-height: 1; cursor: pointer;
+            background: transparent; color: #dbe9f7;
+            border: none; border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+            font-size: 20px; line-height: 1; cursor: pointer;
             transition: background 0.15s, color 0.15s;
         }
         .toolGroup button:last-child { border-bottom: none; }
-        .toolGroup button:hover { background: rgba(79, 195, 247, 0.22); color: #4fc3f7; }
-        .toolGroup button.active { background: rgba(255, 82, 82, 0.88); color: #fff; }
-        .toolGroup button svg { width: 22px; height: 22px; }
+        .toolGroup button:hover { background: var(--accent-soft); color: var(--accent); }
+        .toolGroup button.active { background: rgba(244, 63, 94, 0.85); color: #fff; }
+        .toolGroup button svg { width: 21px; height: 21px; }
+
+        /* ============================================================
+           五、坐标读数 / 剖面图 / 状态提示
+           ============================================================ */
+        #coordHud {
+            position: absolute; left: 22px; bottom: 22px; z-index: 998;
+            display: flex; align-items: center; gap: 16px;
+            padding: 9px 16px; border-radius: 12px;
+            background: var(--glass); border: 1px solid var(--line);
+            box-shadow: var(--shadow); backdrop-filter: blur(14px);
+            font-size: 11.5px; color: var(--muted); letter-spacing: 0.2px;
+            pointer-events: none;
+        }
+        #coordHud .coord-item { display: flex; align-items: baseline; gap: 6px; }
+        #coordHud b {
+            color: var(--text); font-weight: 600;
+            font-variant-numeric: tabular-nums; min-width: 74px;
+            display: inline-block;
+        }
+        #coordHud .divider { width: 1px; height: 12px; background: rgba(148, 197, 255, 0.16); }
+
+        #profilePanel {
+            position: absolute; left: 0; right: 0; bottom: 0; z-index: 997;
+            height: 250px; display: none; flex-direction: column;
+            background: linear-gradient(180deg, rgba(8, 16, 27, 0.96), rgba(6, 12, 21, 0.99));
+            border-top: 1px solid var(--line-strong);
+            box-shadow: 0 -18px 40px rgba(0, 0, 0, 0.45);
+        }
+        #profilePanel.visible { display: flex; }
+        #profileHeader {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; padding: 10px 22px;
+            border-bottom: 1px solid rgba(148, 197, 255, 0.1);
+        }
+        .title-wrap { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+        #profileTitle {
+            font-size: 13px; font-weight: 600; color: var(--text);
+            letter-spacing: 0.3px; white-space: nowrap;
+            overflow: hidden; text-overflow: ellipsis;
+        }
+        .profile-sub { font-size: 11px; color: var(--muted); white-space: nowrap; }
+        #profileHeader .actions { display: flex; gap: 8px; flex: none; }
+        #profileHeader button {
+            height: 28px; padding: 0 12px; font-size: 12px; cursor: pointer;
+            border-radius: 8px; color: #bcd6ee; background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--line); font-family: var(--font);
+            transition: all 0.15s;
+        }
+        #profileHeader button:hover {
+            color: #fff; border-color: var(--line-strong); background: var(--accent-soft);
+        }
+        #profileCanvas { display: block; width: 100%; flex: 1; min-height: 0; }
+
+        #statusMsg {
+            position: absolute; left: 50%; bottom: 30px; z-index: 1001;
+            transform: translate(-50%, 10px); opacity: 0;
+            padding: 10px 22px; border-radius: 99px;
+            font-size: 12.5px; white-space: nowrap; max-width: 80vw;
+            overflow: hidden; text-overflow: ellipsis;
+            color: var(--text); background: rgba(8, 16, 27, 0.92);
+            border: 1px solid var(--line); box-shadow: var(--shadow);
+            backdrop-filter: blur(12px); pointer-events: none;
+            transition: opacity 0.22s ease, transform 0.22s ease;
+        }
+        #statusMsg.show { opacity: 1; transform: translate(-50%, 0); }
+
+        /* 剖面面板展开时，底部组件上移避让 */
+        body.profile-open #statusMsg { bottom: 268px; }
+        body.profile-open #coordHud { bottom: 268px; }
+
+        /* ============================================================
+           六、加载遮罩
+           ============================================================ */
+        #loading {
+            position: fixed; inset: 0; z-index: 3000;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 18px;
+            background: radial-gradient(circle at 50% 42%, #0b1c2e 0%, #04080f 68%);
+            color: var(--text);
+            transition: opacity 0.7s ease, visibility 0.7s ease;
+        }
+        #loading.hidden { opacity: 0; visibility: hidden; }
+        .loader-ring {
+            width: 48px; height: 48px; border-radius: 50%;
+            border: 2px solid rgba(56, 189, 248, 0.18);
+            border-top-color: var(--accent);
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #loading .load-title { font-size: 15px; font-weight: 600; letter-spacing: 2.4px; }
+        #loading .load-sub { font-size: 11.5px; color: var(--muted); letter-spacing: 1px; }
+
+        /* ============================================================
+           七、小屏适配
+           ============================================================ */
+        @media (max-width: 1180px) {
+            .brand-sub { display: none; }
+            #searchInput { width: 160px; }
+            .mode-btn .mode-label { display: none; }
+        }
+        @media (max-width: 860px) {
+            .brand { display: none; }
+            .topbar { padding: 0 112px 0 14px; gap: 10px; }
+            #terrainPanel { width: 216px; left: 14px; }
+            #navPanel { right: 14px; }
+            #coordHud { display: none; }
+            #profilePanel { height: 220px; }
+        }
     </style>
 
     <link rel="stylesheet"
@@ -171,20 +404,102 @@
 <!-- ============================================================
      三、页面结构
      ============================================================ -->
-<div id="cesiumContainer"></div>
 
-<!-- 顶部功能按钮 -->
-<button id="markBtn" class="topBtn">标记模式：关</button>
-<button id="profileBtn" class="topBtn">剖面图模式：关</button>
-
-<!-- 搜索面板 -->
-<div id="searchPanel">
-    <input id="searchInput" type="text" placeholder="搜索地名，如：北京、广州" />
-    <button id="searchBtn">搜索</button>
+<!-- ---------- 加载遮罩 ---------- -->
+<div id="loading">
+    <div class="loader-ring"></div>
+    <div class="load-title">三维地形互动地图</div>
+    <div class="load-sub">正在加载天地图影像与全球地形…</div>
 </div>
-<div id="resultList"></div>
 
-<!-- 右侧导航工具条（指北针 + 缩放 + 量算） -->
+<!-- ---------- 三维场景 ---------- -->
+<div id="cesiumContainer"></div>
+<div id="vignette"></div>
+
+<!-- ---------- 顶部工具条：品牌 · 搜索 · 模式 ---------- -->
+<header class="topbar">
+    <div class="brand">
+        <div class="brand-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#03202f" stroke-width="2.1"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2.5 18.4 8.8 9.1l3.9 5.4 2.6-3.2 6.2 7.1Z"/>
+                <path d="M2.5 21.2h19"/>
+            </svg>
+        </div>
+        <div>
+            <div class="brand-title">三维地形互动地图</div>
+            <div class="brand-sub">3D Terrain Explorer</div>
+        </div>
+    </div>
+
+    <div id="searchPanel" class="search-group">
+        <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round">
+                <circle cx="10.8" cy="10.8" r="6.4"/>
+                <path d="M15.6 15.6 20.5 20.5"/>
+            </svg>
+            <input id="searchInput" type="text" placeholder="搜索地名，如：北京、广州" />
+        </div>
+        <button id="searchBtn">搜索</button>
+        <div id="resultList"></div>
+    </div>
+
+    <div class="mode-group">
+        <button id="markBtn" class="mode-btn" title="标记模式：点击地图放置标记">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 21.2c3.8-4 6.4-7.4 6.4-10.4a6.4 6.4 0 0 0-12.8 0c0 3 2.6 6.4 6.4 10.4Z"/>
+                <circle cx="12" cy="10.4" r="2.4"/>
+            </svg>
+            <span class="mode-label">标记模式</span>
+            <span class="mode-state">关</span>
+        </button>
+        <button id="profileBtn" class="mode-btn" title="剖面图模式：点击地图选择起终点">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2.8 17.6 7.8 9l4.1 4.6 2.9-4.6 6.4 8.6"/>
+                <path d="M2.8 21h18.4"/>
+            </svg>
+            <span class="mode-label">剖面图模式</span>
+            <span class="mode-state">关</span>
+        </button>
+    </div>
+</header>
+
+<!-- ---------- 地形夸张控制 ---------- -->
+<aside id="terrainPanel">
+    <div class="panel-head">
+        <div class="panel-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19h18"/>
+                <path d="M6 19V9l6-4 6 4v10"/>
+                <path d="M10 19v-4h4v4"/>
+            </svg>
+            地形夸张
+        </div>
+        <div class="panel-value"><span id="terrainValue">1.0</span><small>×</small></div>
+    </div>
+
+    <input id="terrainSlider" class="slider" type="range"
+           min="1" max="5" step="0.1" value="1" aria-label="地形夸张倍数" />
+    <div class="slider-scale"><span>1× 真实</span><span>5× 夸张</span></div>
+
+    <div class="presets">
+        <button class="preset active" data-value="1">1×</button>
+        <button class="preset" data-value="1.5">1.5×</button>
+        <button class="preset" data-value="2">2×</button>
+        <button class="preset" data-value="3">3×</button>
+        <button class="preset" data-value="5">5×</button>
+    </div>
+
+    <div class="panel-hint">
+        拖动滑条实时调整<b>垂直夸张倍数</b>，让山脉、峡谷的相对高差更醒目。剖面图始终显示<b>真实海拔</b>。
+    </div>
+</aside>
+
+<!-- ---------- 右侧导航工具条（指北针 + 缩放 + 量算） ---------- -->
 <div id="navPanel">
 
     <!-- 指北针 / 视角轮盘：左键拖动旋转方位，中键拖动调整俯仰与方位 -->
@@ -254,10 +569,22 @@
     </div>
 </div>
 
-<!-- 剖面图面板 -->
+<!-- ---------- 鼠标位置读数 ---------- -->
+<div id="coordHud">
+    <div class="coord-item"><span>经度</span><b id="coordLon">—</b></div>
+    <div class="divider"></div>
+    <div class="coord-item"><span>纬度</span><b id="coordLat">—</b></div>
+    <div class="divider"></div>
+    <div class="coord-item"><span>海拔</span><b id="coordAlt">—</b></div>
+</div>
+
+<!-- ---------- 剖面图面板 ---------- -->
 <div id="profilePanel">
     <div id="profileHeader">
-        <span class="title" id="profileTitle">地形剖面图</span>
+        <div class="title-wrap">
+            <span id="profileTitle">地形剖面图</span>
+            <span class="profile-sub">实际高程 · 不受地形夸张影响</span>
+        </div>
         <div class="actions">
             <button id="profileClearBtn">清除剖面</button>
             <button id="profileCloseBtn">关闭面板</button>
@@ -266,7 +593,7 @@
     <canvas id="profileCanvas"></canvas>
 </div>
 
-<!-- 状态提示 -->
+<!-- ---------- 状态提示 ---------- -->
 <div id="statusMsg"></div>
 
 <script src="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Cesium.js"></script>
@@ -358,8 +685,10 @@ async function initTerrain() {
         viewer.scene.globe.showWaterEffect = false;   // 双保险：显式关闭海面特效
         globalTerrainProvider = terrainProvider;
         console.log('✅ Cesium 官方世界地形加载成功（海面特效已关闭，影像图层保留）');
+        hideLoading();
     } catch (error) {
         console.error('❌ 地形加载失败，回退到椭球地形：', error);
+        hideLoading();
         viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
         viewer.scene.globe.depthTestAgainstTerrain = false;
     }
@@ -407,14 +736,35 @@ function resetToChina(duration = 1.6) {
  * 九、通用工具：状态提示
  * ============================================================ */
 const statusMsg = document.getElementById('statusMsg');
+let statusTimer = null;
 
 function showStatus(msg, duration = 3000) {
+    if (!statusMsg) return;
     statusMsg.textContent = msg;
-    statusMsg.style.display = 'block';
+    statusMsg.classList.add('show');
+    clearTimeout(statusTimer);
     if (duration > 0) {
-        setTimeout(() => { statusMsg.style.display = 'none'; }, duration);
+        statusTimer = setTimeout(function () {
+            statusMsg.classList.remove('show');
+        }, duration);
     }
 }
+
+/* ---------- 加载遮罩：地形就绪后淡出 ---------- */
+const loadingOverlay = document.getElementById('loading');
+let loadingHidden = false;
+
+function hideLoading() {
+    if (loadingHidden || !loadingOverlay) return;
+    loadingHidden = true;
+    loadingOverlay.classList.add('hidden');
+    setTimeout(function () {
+        loadingOverlay.style.display = 'none';
+    }, 800);
+}
+
+/* 兜底：地形服务异常时也要能进入地图 */
+setTimeout(hideLoading, 7000);
 
 
 /* ============================================================
@@ -797,7 +1147,7 @@ function toggleMarkMode() {
     }
 
     markMode = next;
-    markBtn.textContent = markMode ? '标记模式：开' : '标记模式：关';
+    markBtn.querySelector('.mode-state').textContent = markMode ? '开' : '关';
     markBtn.classList.toggle('active', markMode);
     viewer.scene.canvas.style.cursor = markMode ? 'crosshair' : 'default';
 
@@ -837,7 +1187,7 @@ function toggleProfileMode() {
     }
 
     profileMode = next;
-    profileBtn.textContent = profileMode ? '剖面图模式：开' : '剖面图模式：关';
+    profileBtn.querySelector('.mode-state').textContent = profileMode ? '开' : '关';
     profileBtn.classList.toggle('active', profileMode);
     viewer.scene.canvas.style.cursor = profileMode ? 'crosshair' : 'default';
 
@@ -859,6 +1209,7 @@ function clearProfile() {
         profileRubberLine = null;
     }
     profilePanel.classList.remove('visible');
+    document.body.classList.remove('profile-open');
 }
 
 profileBtn.addEventListener('click', toggleProfileMode);
@@ -874,6 +1225,7 @@ profileCloseBtn.addEventListener('click', () => {
 /* ---------- 剖面图绘制核心 ---------- */
 function drawProfile(lon1, lat1, lon2, lat2, positions) {
     profilePanel.classList.add('visible');
+    document.body.classList.add('profile-open');
 
     // 适配 canvas 分辨率
     const dpr = window.devicePixelRatio || 1;
@@ -1411,7 +1763,160 @@ handler.setInputAction(function (movement) {
         updateMeasurePreview(movement.endPosition);
     }
 
+    // 鼠标位置经纬度 / 海拔读数
+    updateCoordHud(movement.endPosition);
+
 }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+
+/* ============================================================
+ * 十七、地形夸张（Vertical Exaggeration）
+ *     · Cesium ≥ 1.116：scene.verticalExaggeration
+ *     · 旧版本回退：scene.terrainExaggeration
+ * ============================================================ */
+(function setupTerrainExaggeration() {
+    const scene   = viewer.scene;
+    const slider  = document.getElementById('terrainSlider');
+    const valueEl = document.getElementById('terrainValue');
+    const panelEl = document.getElementById('terrainPanel');
+    const presetBtns = Array.prototype.slice.call(
+        document.querySelectorAll('#terrainPanel .preset')
+    );
+
+    const EXAG_MIN = 1;
+    const EXAG_MAX = 5;
+
+    const hasVertical = 'verticalExaggeration' in scene;
+    const hasLegacy   = 'terrainExaggeration' in scene;
+
+    let currentValue = 1;
+    let rafId = 0;
+
+    /* ---------- 写入 Cesium 场景 ---------- */
+    function writeToScene(value) {
+        try {
+            if (hasVertical) {
+                scene.verticalExaggeration = value;
+                return true;
+            }
+            if (hasLegacy) {
+                scene.terrainExaggeration = value;
+                return true;
+            }
+        } catch (err) {
+            console.warn('地形夸张设置失败：', err);
+        }
+        return false;
+    }
+
+    /* ---------- 同步滑条 / 数值 / 预设按钮 ---------- */
+    function renderExaggerationUI(value) {
+        if (valueEl) valueEl.textContent = value.toFixed(1);
+
+        if (slider) {
+            if (Math.abs(parseFloat(slider.value) - value) > 0.001) {
+                slider.value = String(value);
+            }
+            const percent = ((value - EXAG_MIN) / (EXAG_MAX - EXAG_MIN)) * 100;
+            slider.style.setProperty('--fill', percent.toFixed(2) + '%');
+        }
+
+        presetBtns.forEach(function (btn) {
+            const v = parseFloat(btn.dataset.value);
+            btn.classList.toggle('active', Math.abs(v - value) < 0.05);
+        });
+    }
+
+    /* ---------- 应用夸张倍数 ---------- */
+    function applyExaggeration(value) {
+        currentValue = Math.min(EXAG_MAX, Math.max(EXAG_MIN, value));
+        writeToScene(currentValue);
+        renderExaggerationUI(currentValue);
+    }
+
+    /* ---------- 拖动时按帧节流：避免频繁重建地形网格 ---------- */
+    function scheduleExaggeration(value) {
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(function () {
+            rafId = 0;
+            applyExaggeration(value);
+        });
+    }
+
+    if (!hasVertical && !hasLegacy) {
+        if (slider) slider.disabled = true;
+        presetBtns.forEach(function (btn) { btn.disabled = true; });
+        if (panelEl) panelEl.classList.add('unsupported');
+        showStatus('当前 Cesium 版本不支持地形夸张', 4000);
+        return;
+    }
+
+    if (slider) {
+        slider.addEventListener('input', function () {
+            scheduleExaggeration(parseFloat(slider.value));
+        });
+        slider.addEventListener('change', function () {
+            showStatus('地形夸张：' + currentValue.toFixed(1) + '×', 1800);
+        });
+    }
+
+    presetBtns.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            applyExaggeration(parseFloat(btn.dataset.value));
+            showStatus('地形夸张：' + currentValue.toFixed(1) + '×', 1800);
+        });
+    });
+
+    /* 初始状态：真实地形（1×） */
+    applyExaggeration(1);
+    console.log('✅ 地形夸张控制已就绪（1× - 5×）');
+})();
+
+
+/* ============================================================
+ * 十八、鼠标位置：经纬度 / 海拔读数
+ * ============================================================ */
+const coordLonEl = document.getElementById('coordLon');
+const coordLatEl = document.getElementById('coordLat');
+const coordAltEl = document.getElementById('coordAlt');
+
+let coordHudAt = 0;
+
+function formatLonLat(deg, posSuffix, negSuffix) {
+    return Math.abs(deg).toFixed(4) + '° ' + (deg >= 0 ? posSuffix : negSuffix);
+}
+
+function updateCoordHud(screenPos) {
+    if (!coordLonEl) return;
+
+    const now = performance.now();
+    if (now - coordHudAt < 90) return;
+    coordHudAt = now;
+
+    const ray = viewer.camera.getPickRay(screenPos);
+    if (!ray) return;
+
+    const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+    if (!cartesian) return;
+
+    const carto = Cesium.Cartographic.fromCartesian(cartesian);
+    const lon = Cesium.Math.toDegrees(carto.longitude);
+    const lat = Cesium.Math.toDegrees(carto.latitude);
+
+    coordLonEl.textContent = formatLonLat(lon, 'E', 'W');
+    coordLatEl.textContent = formatLonLat(lat, 'N', 'S');
+
+    let height = null;
+    try {
+        height = viewer.scene.globe.getHeight(carto);
+    } catch (err) {
+        height = null;
+    }
+
+    coordAltEl.textContent = (typeof height === 'number')
+        ? Math.round(height) + ' m'
+        : '—';
+}
 
 console.log('✅ 三维地形互动底图初始化完成');
 </script>
