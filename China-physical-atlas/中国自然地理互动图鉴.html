@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#071119" />
+  <meta name="description" content="中国自然地理互动教学地图：三级阶梯、主要山脉、气候类型、干湿地区、温度带与四大盆地、四大高原、三大平原。" />
+  <title>中国自然地理图鉴 · 三维互动地图</title>
+
+  <!-- Cesium 官方控件样式：只使用基础画布，界面控件由本页自行绘制 -->
+  <link rel="stylesheet" href="./vendor/cesium/Widgets/widgets.css" />
+  <link rel="stylesheet" href="./assets/style.css" />
+</head>
+<body>
+  <!-- ==========================================================================
+       一、页面骨架
+       #app 是整页容器；#cesiumContainer 留给 Cesium 绘制三维地球；
+       其余元素都是叠加在地图上的自定义 UI。
+       ========================================================================== -->
+  <main id="app">
+    <div id="cesiumContainer" aria-label="中国三维地图画布"></div>
+    <div class="map-vignette" aria-hidden="true"></div>
+
+    <!-- ========================================================================
+         二、启动加载页
+         JS 初始化成功后为 #loadingScreen 加上 .is-hidden；
+         若 Cesium / WebGL / 天地图失败，则显示对应错误提示。
+         ======================================================================= -->
+    <section id="loadingScreen" aria-label="地图加载中">
+      <div class="loading-card">
+        <div class="loader-orbit" aria-hidden="true">
+          <span class="loader-seal">山</span>
+        </div>
+        <p class="loader-kicker">CHINA · PHYSICAL ATLAS</p>
+        <h2>中国自然地理图鉴</h2>
+        <p class="loading-copy">以山河为卷，读地势、气候与风物的中国。</p>
+        <div class="loader-line" aria-hidden="true"></div>
+        <p id="loadingDetail">正在初始化三维地球 · 连接天地图底图</p>
+      </div>
+    </section>
+
+    <!-- ========================================================================
+         三、页头品牌
+         ======================================================================= -->
+    <header id="appHeader" aria-label="网站标题">
+      <div class="brand-seal" aria-hidden="true">山</div>
+      <div class="brand-copy">
+        <p class="eyebrow">CHINA · PHYSICAL ATLAS</p>
+        <h1>中国自然地理图鉴</h1>
+      </div>
+    </header>
+
+    <div id="headerMeta" aria-hidden="true">
+      <span>三维地球</span>
+      <span class="meta-dot"></span>
+      <span>拖动旋转 · 滚轮缩放 · 单击阅读</span>
+    </div>
+
+    <!-- ========================================================================
+         四、左侧自动收展专题栏
+         鼠标碰到网页最左侧即可展开；移开后自动收起。
+         点击图钉可以固定展开，方便连续切换多个专题。
+         ======================================================================= -->
+    <div id="sidebarZone">
+      <button id="sidebarTab" type="button" aria-label="展开地理专题图层" aria-controls="sidebar">
+        <span id="tabGlyph" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span id="tabText">专题图层</span>
+        <span id="tabBadge">1</span>
+      </button>
+
+      <aside id="sidebar" aria-label="地理专题图层" aria-hidden="true">
+        <div class="sidebar-inner">
+          <div class="sidebar-top">
+            <div>
+              <p class="sidebar-kicker">THEMATIC ATLAS · 2026</p>
+              <h2 class="sidebar-title">地理专题 <span>6 Layers</span></h2>
+            </div>
+            <div class="sidebar-tools">
+              <button id="sidebarPin" class="icon-btn" type="button" title="固定侧栏" aria-label="固定侧栏" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M9 3h6l-1 7 3.5 3.2V15H6.5v-1.8L10 10 9 3Z"/>
+                  <path d="M12 15v6"/>
+                </svg>
+              </button>
+              <button id="sidebarClose" class="icon-btn" type="button" title="收起侧栏" aria-label="收起侧栏">×</button>
+            </div>
+          </div>
+
+          <p class="sidebar-intro">把地图当作一册会回应的教科书。专题可同时开启多个，图例会在左下角逐项叠加；单击地图上的区域或名字，阅读它背后的地理知识。</p>
+
+          <div class="sidebar-section-label"><span>专题图层</span><span id="activeThemeCount">已开启 1 个</span></div>
+
+          <div class="theme-list" role="group" aria-label="选择地理专题">
+            <!-- 01 三级阶梯 -->
+            <button class="theme-item is-active" type="button" data-theme="steps" style="--accent:#b9a3e3" aria-pressed="true">
+              <span class="theme-index">01</span>
+              <span class="theme-text">
+                <span class="theme-name">三级阶梯</span>
+                <span class="theme-desc">三大阶梯 · 两条分界线</span>
+              </span>
+              <span class="theme-toggle" aria-hidden="true"></span>
+            </button>
+
+            <!-- 02 主要山脉 -->
+            <button class="theme-item" type="button" data-theme="mountains" style="--accent:#e2a06d" aria-pressed="false">
+              <span class="theme-index">02</span>
+              <span class="theme-text">
+                <span class="theme-name">主要山脉</span>
+                <span class="theme-desc">25 条山脉 · 四种走向</span>
+              </span>
+              <span class="theme-toggle" aria-hidden="true"></span>
+            </button>
+
+            <!-- 03 气候类型 -->
+            <button class="theme-item" type="button" data-theme="climate" style="--accent:#e2b46e" aria-pressed="false">
+              <span class="theme-index">03</span>
+              <span class="theme-text">
+                <span class="theme-name">气候类型</span>
+                <span class="theme-desc">五种气候 · 季风与大陆性</span>
+              </span>
+              <span class="theme-toggle" aria-hidden="true"></span>
+            </button>
+
+            <!-- 04 干湿地区 -->
+            <button class="theme-item" type="button" data-theme="drywet" style="--accent:#91c99c" aria-pressed="false">
+              <span class="theme-index">04</span>
+              <span class="theme-text">
+                <span class="theme-name">干湿地区</span>
+                <span class="theme-desc">四类地区 · 降水与蒸发</span>
+              </span>
+              <span class="theme-toggle" aria-hidden="true"></span>
+            </button>
+
+            <!-- 05 地形区 -->
+            <button class="theme-item" type="button" data-theme="landforms" style="--accent:#e0bf7a" aria-pressed="false">
+              <span class="theme-index">05</span>
+              <span class="theme-text">
+                <span class="theme-name">地形区</span>
+                <span class="theme-desc">四大盆地 · 四大高原 · 三大平原</span>
+              </span>
+              <span class="theme-toggle" aria-hidden="true"></span>
+            </button>
+
+            <!-- 06 温度带 -->
+            <button class="theme-item" type="button" data-theme="temperature" style="--accent:#c7a06d" aria-pressed="false">
+              <span class="theme-index">06</span>
+              <span class="theme-text">
+                <span class="theme-name">温度带</span>
+                <span class="theme-desc">寒温带至热带 · 青藏高原区</span>
+              </span>
+              <span class="theme-toggle" aria-hidden="true"></span>
+            </button>
+          </div>
+
+          <div class="sidebar-bottom">
+            <div class="sidebar-actions">
+              <button id="clearThemes" class="side-btn" type="button">隐藏全部专题</button>
+              <button id="resetViewSidebar" class="side-btn" type="button">回到全国视角</button>
+            </div>
+            <p class="sidebar-source">作者 · White Brich Yzh　|　底图 © 天地图<br />专题边界为教学示意，不用于权属判断。</p>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- ========================================================================
+         五、右上角：指南针与固定倍率缩放
+         ======================================================================= -->
+    <div id="navTools" aria-label="地图导航工具">
+      <button id="compass" type="button" title="点击回正北" aria-label="指南针，点击回正北">
+        <svg id="compassSvg" viewBox="0 0 100 100" aria-hidden="true">
+          <circle id="compassRing" cx="50" cy="50" r="43"></circle>
+          <g id="compassTicks">
+            <line x1="50" y1="8" x2="50" y2="14"></line>
+            <line x1="50" y1="86" x2="50" y2="92"></line>
+            <line x1="8" y1="50" x2="14" y2="50"></line>
+            <line x1="86" y1="50" x2="92" y2="50"></line>
+            <line x1="21" y1="21" x2="25" y2="25"></line>
+            <line x1="79" y1="21" x2="75" y2="25"></line>
+            <line x1="21" y1="79" x2="25" y2="75"></line>
+            <line x1="79" y1="79" x2="75" y2="75"></line>
+          </g>
+          <g id="compassNeedle">
+            <path d="M50 17 L56 48 L50 43 L44 48 Z" fill="#e58a70"></path>
+            <path d="M50 83 L44 52 L50 57 L56 52 Z" fill="rgba(210,233,225,.46)"></path>
+            <circle cx="50" cy="50" r="3.2" fill="rgba(10,26,31,.96)" stroke="rgba(201,243,223,.5)" stroke-width="1"></circle>
+            <text id="compassN" x="50" y="12" text-anchor="middle">N</text>
+          </g>
+        </svg>
+        <span id="compassCounter">正北 0°</span>
+      </button>
+
+      <div class="zoom-tools" role="group" aria-label="缩放地图">
+        <button id="zoomIn" class="zoom-btn" type="button" title="放大（固定倍率）" aria-label="放大地图">+</button>
+        <div class="zoom-divider" aria-hidden="true"></div>
+        <div class="zoom-scale" id="zoomScale">—</div>
+        <div class="zoom-divider" aria-hidden="true"></div>
+        <button id="zoomOut" class="zoom-btn" type="button" title="缩小（固定倍率）" aria-label="缩小地图">−</button>
+      </div>
+    </div>
+
+    <!-- ========================================================================
+         六、左下角：动态图例
+         每个专题开启后，由 JavaScript 根据专题配置自动生成，不写死在 HTML 里。
+         ======================================================================= -->
+    <section id="legendPanel" aria-label="地图图例" aria-hidden="true">
+      <div class="legend-head">
+        <div class="legend-title-wrap">
+          <span class="legend-kicker">LEGEND</span>
+          <h2>图例</h2>
+        </div>
+        <button id="legendToggle" type="button" title="收起 / 展开图例" aria-label="收起或展开图例" aria-expanded="true">−</button>
+      </div>
+      <div id="legendContent" class="legend-scroll"></div>
+    </section>
+
+    <!-- ========================================================================
+         七、右下角：底图切换
+         默认只显示一个“叠层”图标；点击后在按钮上方展开三类底图。
+         ======================================================================= -->
+    <div id="baseSwitcher">
+      <div id="basePanel" class="base-panel" role="menu" aria-label="选择底图" hidden>
+        <div class="base-panel-head">
+          <h3>选择底图</h3>
+          <span>BASEMAP</span>
+        </div>
+
+        <button class="base-option is-active" type="button" data-base="vector" role="menuitemradio" aria-checked="true">
+          <span class="base-thumb vector" aria-hidden="true"><span class="base-thumb-label">矢</span></span>
+          <span class="base-option-copy">
+            <span class="base-option-name">矢量底图</span>
+            <span class="base-option-desc">省界 · 地名 · 道路</span>
+          </span>
+          <span class="base-check" aria-hidden="true">✓</span>
+        </button>
+
+        <button class="base-option" type="button" data-base="imagery" role="menuitemradio" aria-checked="false">
+          <span class="base-thumb imagery" aria-hidden="true"><span class="base-thumb-label">影</span></span>
+          <span class="base-option-copy">
+            <span class="base-option-name">遥感底图</span>
+            <span class="base-option-desc">卫星影像 · 地表纹理</span>
+          </span>
+          <span class="base-check" aria-hidden="true">✓</span>
+        </button>
+
+        <button class="base-option" type="button" data-base="terrain" role="menuitemradio" aria-checked="false">
+          <span class="base-thumb terrain" aria-hidden="true"><span class="base-thumb-label">地形</span></span>
+          <span class="base-option-copy">
+            <span class="base-option-name">地形底图</span>
+            <span class="base-option-desc">地势晕渲 · 山脉起伏</span>
+          </span>
+          <span class="base-check" aria-hidden="true">✓</span>
+        </button>
+
+        <button id="baseLabelsToggle" class="base-label-toggle" type="button" role="switch" aria-checked="true" title="显示或隐藏当前底图注记">
+          <span class="base-label-icon" aria-hidden="true">Aa</span>
+          <span class="base-option-copy">
+            <span class="base-option-name" id="baseLabelsName">影像注记</span>
+            <span class="base-option-desc" id="baseLabelsDesc">显示天地图影像地名 / 境界</span>
+          </span>
+          <span class="base-switch" aria-hidden="true"><span></span></span>
+        </button>
+
+        <div class="base-panel-foot">
+          <span>在线底图 · 天地图</span>
+          <a href="https://www.tianditu.gov.cn/" target="_blank" rel="noopener noreferrer">数据来源 ↗</a>
+        </div>
+      </div>
+
+      <button id="baseToggle" type="button" title="切换底图" aria-label="切换底图" aria-controls="basePanel" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3 21 8 12 13 3 8 12 3Z"/>
+          <path d="m3 12 9 5 9-5"/>
+          <path d="m3 16 9 5 9-5"/>
+        </svg>
+        <span class="base-dot" aria-hidden="true"></span>
+      </button>
+    </div>
+
+    <!-- ========================================================================
+         八、底部状态栏：作者 / 数据来源 / 鼠标经纬度 / 比例尺 / Cesium 版权
+         Cesium 官方 credit 会注入 #cesiumCredits，请保留版权显示。
+         ======================================================================= -->
+    <footer id="statusDock" aria-label="地图状态信息">
+      <div class="dock-left">
+        <span class="dock-strong dock-optional">中国自然地理图鉴</span>
+        <span class="dock-rule dock-optional"></span>
+        <span class="dock-label">作者</span>
+        <span class="dock-strong author-name" id="authorName">White Brich Yzh</span>
+        <span class="dock-rule dock-optional"></span>
+        <span class="dock-label dock-optional">底图</span>
+        <span class="dock-optional">© 天地图</span>
+        <div id="cesiumCredits" aria-label="Cesium 版权信息"></div>
+      </div>
+
+      <div class="dock-center" aria-live="polite">
+        <span id="coordDot" aria-hidden="true"></span>
+        <span id="coordLon">经度 —</span>
+        <span class="coord-sep">/</span>
+        <span id="coordLat">纬度 —</span>
+        <span class="coord-suffix">WGS 84</span>
+      </div>
+
+      <div class="dock-right">
+        <span class="dock-label">比例尺</span>
+        <div id="scaleGroup" aria-label="地图比例尺">
+          <div id="scaleBar">
+            <span id="scaleLine"></span>
+            <span id="scaleText">—</span>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <!-- ========================================================================
+         九、地图知识卡片
+         点击专题色块、山脉名称或阶梯分界线后出现，内容来自 app.js 中的文案配置。
+         ======================================================================= -->
+    <article id="featureCard" aria-hidden="true" aria-labelledby="cardTitle">
+      <button id="cardClose" class="card-close" type="button" title="关闭知识卡片" aria-label="关闭知识卡片">×</button>
+      <p id="cardEyebrow" class="card-eyebrow">地理知识</p>
+      <h2 id="cardTitle"></h2>
+      <p id="cardLead"></p>
+      <div id="cardHighlight" class="card-highlight" hidden></div>
+      <div id="cardFacts" class="card-facts"></div>
+      <div id="cardNoteWrap" class="card-note">
+        <p class="card-note-label">KNOW MORE · 知识延伸</p>
+        <p id="cardNote"></p>
+      </div>
+      <div class="card-foot">
+        <span>中国自然地理图鉴 · 教学示意</span>
+        <span><kbd>Esc</kbd> 关闭</span>
+      </div>
+    </article>
+
+    <!-- ========================================================================
+         十、轻提示、file:// 提醒
+         ======================================================================= -->
+    <div id="toast" role="status" aria-live="polite"></div>
+
+    <div id="protocolWarning" hidden>
+      <span class="warning-icon" aria-hidden="true">!</span>
+      <span>
+        <strong>请用本地网页服务打开。</strong>
+        天地图浏览器密钥会校验访问来源；直接双击 HTML 可能出现底图 403。请双击“启动地图.bat”，或在本目录执行
+        <code>node server.mjs</code>。
+      </span>
+      <button id="protocolWarningClose" type="button" title="关闭提醒" aria-label="关闭提醒">×</button>
+    </div>
+
+    <!-- 视觉提示：鼠标可以靠近左侧边缘。首次打开时淡出，不阻塞操作 -->
+    <div id="sideHoverHint" aria-hidden="true">鼠标靠近左侧展开专题</div>
+  </main>
+
+  <noscript>
+    <div style="position:fixed;inset:0;z-index:999;display:grid;place-items:center;background:#071119;color:#eaf2ed;font:14px/1.8 'Microsoft YaHei',sans-serif;text-align:center;padding:24px;">
+      本页需要启用 JavaScript 才能加载三维地图。<br />请在浏览器设置中启用 JavaScript 后刷新。
+    </div>
+  </noscript>
+
+  <!-- ==========================================================================
+       十一、脚本加载顺序
+       1) 指定 Cesium 资源根路径；
+       2) 加载本地 Cesium；
+       3) 专题几何数据（由 scripts/build_thematic_data.mjs 自动生成）；
+       4) 页面交互逻辑 app.js。
+       若本地 Cesium 缺失，会自动尝试从 unpkg 加载 1.147.0 作为兜底。
+       ========================================================================== -->
+  <script>
+    window.CESIUM_BASE_URL = './vendor/cesium/';
+  </script>
+  <script src="./vendor/cesium/Cesium.js"></script>
+  <script>
+    if (!window.Cesium) {
+      window.CESIUM_BASE_URL = 'https://unpkg.com/cesium@1.147.0/Build/Cesium/';
+      document.write('<script src="' + window.CESIUM_BASE_URL + 'Cesium.js"><\/script>');
+    }
+  </script>
+  <script src="./assets/thematic-meta.js"></script>
+  <script src="./assets/thematic-data.js"></script>
+  <script src="./assets/app.js"></script>
+</body>
+</html>
