@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#071119" />
+  <meta name="description" content="中国自然地理图鉴项目索引：三级阶梯、主要山脉、气候类型、干湿地区、温度带与地形区。" />
+  <title>山河中国 · 中国自然地理图鉴</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #071119;
+      --ink-2: #0b1b22;
+      --paper: #edf2ef;
+      --muted: #9aada9;
+      --line: rgba(237, 242, 239, 0.16);
+      --accent: #d9b36c;
+      --accent-soft: rgba(217, 179, 108, 0.14);
+      --teal: #7fb8a8;
+      --max: 1080px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-height: 100svh;
+      color: var(--paper);
+      background:
+        radial-gradient(circle at 12% 8%, rgba(217, 179, 108, 0.14), transparent 32rem),
+        radial-gradient(circle at 88% 18%, rgba(127, 184, 168, 0.13), transparent 30rem),
+        linear-gradient(180deg, #071119 0%, #0b1b22 52%, #071119 100%);
+      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", system-ui, sans-serif;
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.22;
+      background-image:
+        repeating-linear-gradient(90deg, transparent 0 118px, rgba(255,255,255,0.035) 119px 120px),
+        repeating-linear-gradient(0deg, transparent 0 118px, rgba(255,255,255,0.025) 119px 120px);
+      mask-image: linear-gradient(180deg, black, transparent 78%);
+    }
+
+    a { color: inherit; }
+
+    .skip-link {
+      position: fixed;
+      top: 0.75rem;
+      left: 0.75rem;
+      z-index: 10;
+      padding: 0.55rem 0.85rem;
+      color: var(--ink);
+      background: var(--accent);
+      border-radius: 0.35rem;
+      transform: translateY(-180%);
+    }
+    .skip-link:focus { transform: translateY(0); }
+
+    .page {
+      position: relative;
+      width: min(var(--max), calc(100% - 3rem));
+      margin: 0 auto;
+      padding: clamp(3rem, 8vw, 7rem) 0 2.25rem;
+    }
+
+    .hero {
+      max-width: 880px;
+      padding-bottom: clamp(3rem, 7vw, 6rem);
+    }
+
+    .hero-top {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin-bottom: 1.8rem;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 2.1rem;
+      height: 2.1rem;
+      border: 1px solid rgba(217, 179, 108, 0.85);
+      border-radius: 50%;
+      color: var(--accent);
+      font-family: "Songti SC", "STSong", "SimSun", serif;
+      font-size: 1.05rem;
+    }
+
+    .eyebrow {
+      margin: 0;
+      color: var(--accent);
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Songti SC", "STSong", "SimSun", serif;
+      font-size: clamp(3.2rem, 9vw, 7.4rem);
+      font-weight: 500;
+      line-height: 1.02;
+      letter-spacing: 0.04em;
+    }
+
+    .hero-subtitle {
+      margin: 0.85rem 0 0;
+      color: var(--teal);
+      font-size: clamp(1.05rem, 2vw, 1.35rem);
+      letter-spacing: 0.12em;
+    }
+
+    .hero-copy {
+      max-width: 36rem;
+      margin: 1.7rem 0 0;
+      color: var(--muted);
+      font-size: clamp(0.95rem, 1.5vw, 1.05rem);
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem 1.5rem;
+      margin-top: 2rem;
+      color: rgba(237, 242, 239, 0.72);
+      font-size: 0.78rem;
+      letter-spacing: 0.12em;
+    }
+
+    .hero-meta span::before {
+      content: "";
+      display: inline-block;
+      width: 0.36rem;
+      height: 0.36rem;
+      margin-right: 0.55rem;
+      border-radius: 50%;
+      background: var(--accent);
+      vertical-align: 0.12em;
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1.1rem 0 0.9rem;
+      border-top: 1px solid var(--line);
+    }
+
+    .section-label {
+      color: var(--paper);
+      font-size: 0.82rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+    }
+
+    .section-count {
+      color: var(--muted);
+      font-size: 0.68rem;
+      letter-spacing: 0.16em;
+    }
+
+    .project-card {
+      display: flex;
+      min-height: 21rem;
+      flex-direction: column;
+      padding: clamp(1.5rem, 4vw, 2.8rem);
+      border: 1px solid var(--line);
+      border-radius: 0.65rem;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.045), transparent 52%),
+        rgba(255, 255, 255, 0.018);
+      text-decoration: none;
+      transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+    }
+
+    .project-card:hover,
+    .project-card:focus-visible {
+      border-color: rgba(217, 179, 108, 0.75);
+      background:
+        linear-gradient(135deg, var(--accent-soft), transparent 55%),
+        rgba(255, 255, 255, 0.03);
+      transform: translateY(-3px);
+    }
+
+    .project-card:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 4px;
+    }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.4rem;
+      color: var(--accent);
+      font-size: 0.7rem;
+      letter-spacing: 0.16em;
+    }
+
+    .card-index { font-variant-numeric: tabular-nums; }
+
+    .card-status {
+      padding: 0.18rem 0.55rem;
+      border: 1px solid rgba(127, 184, 168, 0.35);
+      border-radius: 999px;
+      color: var(--teal);
+      letter-spacing: 0.1em;
+    }
+
+    .project-card h2 {
+      margin: 0;
+      font-family: "Songti SC", "STSong", "SimSun", serif;
+      font-size: clamp(1.65rem, 3.4vw, 2.55rem);
+      font-weight: 500;
+      letter-spacing: 0.03em;
+    }
+
+    .project-card p {
+      max-width: 38rem;
+      margin: 0.8rem 0 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin: 1.35rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .tag-list li {
+      padding: 0.22rem 0.58rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: rgba(237, 242, 239, 0.7);
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+    }
+
+    .card-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      align-self: flex-start;
+      margin-top: auto;
+      padding-top: 2rem;
+      color: var(--accent);
+      font-size: 0.82rem;
+      letter-spacing: 0.12em;
+    }
+
+    .card-action span {
+      display: inline-block;
+      transition: transform 180ms ease;
+    }
+
+    .project-card:hover .card-action span,
+    .project-card:focus-visible .card-action span {
+      transform: translate(2px, -2px);
+    }
+
+    .site-footer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 0.4rem 1.5rem;
+      margin-top: 3rem;
+      padding-top: 1.1rem;
+      border-top: 1px solid var(--line);
+      color: rgba(237, 242, 239, 0.45);
+      font-size: 0.7rem;
+      letter-spacing: 0.05em;
+    }
+    .site-footer p { margin: 0; }
+
+    @media (max-width: 620px) {
+      .page { width: min(100% - 1.5rem, var(--max)); padding-top: 2.4rem; }
+      .hero { padding-bottom: 2.8rem; }
+      .hero-meta { gap: 0.4rem 1rem; font-size: 0.7rem; }
+      .project-card { min-height: 0; border-radius: 0.45rem; }
+      .card-action { padding-top: 1.6rem; }
+      .site-footer { display: block; }
+      .site-footer p + p { margin-top: 0.3rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .project-card, .card-action span { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#projects">跳到项目列表</a>
+
+  <div class="page">
+    <header class="hero">
+      <div class="hero-top">
+        <span class="brand-mark" aria-hidden="true">山</span>
+        <p class="eyebrow">CHINA · PHYSICAL ATLAS</p>
+      </div>
+      <h1>山河中国</h1>
+      <p class="hero-subtitle">中国自然地理图鉴</p>
+      <p class="hero-copy">
+        从三级阶梯到山川走向，从气候类型到干湿地区与温度带，
+        用一张可以点开的三维地图，读懂中国自然地理的空间脉络。
+      </p>
+      <div class="hero-meta" aria-label="项目特点">
+        <span>三维互动</span>
+        <span>专题叠加</span>
+        <span>知识卡片</span>
+      </div>
+    </header>
+
+    <main id="projects">
+      <div class="section-heading">
+        <span class="section-label">项目索引</span>
+        <span class="section-count">01 / 01</span>
+      </div>
+
+      <a class="project-card" href="./China-physical-atlas/中国自然地理互动图鉴.html">
+        <div class="card-top">
+          <span class="card-index">01</span>
+          <span class="card-status">可访问</span>
+        </div>
+        <h2>中国自然地理互动图鉴</h2>
+        <p>
+          融合三级阶梯、主要山脉、气候类型、干湿地区、温度带与四大盆地、
+          四大高原、三大平原的交互式教学地图。
+        </p>
+        <ul class="tag-list" aria-label="专题">
+          <li>三级阶梯</li>
+          <li>山脉走向</li>
+          <li>气候类型</li>
+          <li>干湿地区</li>
+          <li>温度带</li>
+          <li>地形区</li>
+        </ul>
+        <span class="card-action">进入地图 <span aria-hidden="true">↗</span></span>
+      </a>
+    </main>
+
+    <footer class="site-footer">
+      <p>WhiteBrich YZH · 中国自然地理图鉴</p>
+      <p>底图：天地图 · 三维引擎：CesiumJS</p>
+    </footer>
+  </div>
+</body>
+</html>
